@@ -1,6 +1,6 @@
 [project]
 name = "webnovel-kb"
-version = "1.0.0"
+version = "1.5"
 description = "中文网络小说知识库 MCP 服务器"
 readme = "README.md"
 license = {text = "MIT"}

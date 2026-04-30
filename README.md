@@ -4,13 +4,14 @@
 
 ## 功能特性
 
-- **语义检索** - 基于 BGE-small-zh 向量模型 + FAISS/Tantivy 高性能索引
+- **语义检索** - 基于向量嵌入 + FAISS/Tantivy 高性能索引
 - **混合搜索** - BM25 关键词 + 语义向量融合，支持 Rerank 精排
 - **降噪输出** - 默认输出干净文本，无需手动清洗结构化数据
-- **情节模式提取** - 自动识别常见网文套路（退婚流、系统流、扮猪吃虎等）
+- **情节模式提取** - 自动识别跨章节长线叙事模式
 - **写作模板** - 提取可复用的场景写作结构
-- **风格分析** - 分析小说的节奏、对话比、钩子密度等
+- **风格分析** - 分析小说的节奏、对话比、AI指纹、钩子密度等
 - **实体关系图谱** - 角色、地点、组织及其关系网络
+- **异步任务** - 支持后台异步提取，不阻塞主服务
 
 ## MCP 工具列表
 
@@ -122,22 +123,56 @@ ingest_novel(
 | `LLM_API_KEY` | LLM API Key（支持 OpenAI 兼容 API） | 提取功能需要 |
 | `LLM_BASE_URL` | Embedding API 地址 | 否 |
 | `LLM_CHAT_BASE_URL` | Chat API 地址 | 否 |
-| `LLM_EMBEDDING_MODEL` | 嵌入模型名称 | 否（默认 bge-small-zh） |
+| `LLM_EMBEDDING_MODEL` | 嵌入模型名称 | 否 |
 | `LLM_EMBEDDING_DIMENSIONS` | 向量维度 | 否（默认 512） |
 | `WEBNOVEL_KB_DATA` | 数据存储路径 | 否（默认 `./data`） |
 | `MCP_TRANSPORT` | 传输模式：stdio/sse | 否（默认 stdio） |
 | `MCP_HOST` | SSE 监听地址 | 否 |
 | `MCP_PORT` | SSE 监听端口 | 否 |
 
-## 性能指标
+## 目录结构
 
-- 向量索引：42,000+ 文档，检索延迟 < 50ms
-- BM25 索引：44,000+ 文档，检索延迟 < 10ms
-- 内存占用：约 2GB（含模型）
+```
+webnovel_kb/
+├── __init__.py
+├── __main__.py
+├── config.py
+├── server.py
+├── data_models.py
+├── prompts.py
+├── requirements.txt
+├── api/
+│   ├── clients.py      # API 客户端
+│   └── mcp_tools.py    # MCP 工具定义
+├── core/
+│   ├── chunker.py      # 文本分块
+│   ├── indexer.py      # 索引管理
+│   ├── knowledge_base.py # 核心知识库
+│   └── state.py        # 状态管理
+├── extraction/
+│   ├── entities.py     # 实体提取
+│   ├── plot_patterns.py # 情节模式
+│   ├── scene_patterns.py # 场景模式
+│   └── writing_templates.py # 写作模板
+├── search/
+│   ├── bm25_search.py  # BM25 搜索
+│   ├── hybrid.py       # 混合搜索
+│   ├── rerank.py       # 重排序
+│   ├── semantic.py     # 语义搜索
+│   └── unified.py      # 统一搜索
+├── analysis/
+│   ├── humor.py        # 幽默分析
+│   └── style.py        # 风格分析
+├── utils/
+│   ├── dedupe.py       # 去重
+│   └── format.py       # 格式化
+└── scripts/
+    └── build_optimized_indexes.py
+```
 
-## 开发计划
+## 版本
 
-详见 [ROADMAP.md](./ROADMAP.md)
+当前版本：1.5
 
 ## License
 
