@@ -1,15 +1,15 @@
 # WebNovel Knowledge Base
 
-一个专为中文网络小说设计的知识库 MCP 服务器，支持语义检索、情节模式提取、风格分析等功能。
+网文知识库 MCP 服务器 - 用于小说分析、知识提取和智能搜索。
 
 ## 功能特性
 
-- **语义检索** - 基于向量嵌入 + FAISS/Tantivy 高性能索引
+- **语义检索** - 基于向量嵌入 + ChromaDB 向量数据库
 - **混合搜索** - BM25 关键词 + 语义向量融合，支持 Rerank 精排
 - **降噪输出** - 默认输出干净文本，无需手动清洗结构化数据
 - **情节模式提取** - 自动识别跨章节长线叙事模式
 - **写作模板** - 提取可复用的场景写作结构
-- **风格分析** - 分析小说的节奏、对话比、AI指纹、钩子密度等
+- **风格分析** - 分析小说的节奏、对话比、钩子密度等
 - **实体关系图谱** - 角色、地点、组织及其关系网络
 - **异步任务** - 支持后台异步提取，不阻塞主服务
 
@@ -29,28 +29,6 @@
 | `get_task_status` | 查询异步任务状态 |
 | `list_novels` | 列出已导入小说 |
 | `get_stats` | 获取知识库统计 |
-
-## 搜索降噪
-
-三个搜索工具统一支持降噪参数：
-
-```python
-search(
-    query="灵能催化技术",
-    mode="hybrid",           # semantic/bm25/hybrid/rerank
-    output_format="compact", # raw/compact/clean (默认 compact)
-    max_content_length=200,  # 每条最大字数 (0=不限制)
-    dedupe=True              # 去重 (默认 True)
-)
-```
-
-**输出格式对比**：
-
-| 格式 | 示例输出 |
-|---|---|
-| `raw` | `{"text": "...", "metadata": {...}, "relevance": 0.84}` |
-| `compact` | `["[《隐秘死角》 第3章] 联邦政府明令禁止..."]` |
-| `clean` | `["联邦政府明令禁止..."]` |
 
 ## 快速开始
 
@@ -86,9 +64,9 @@ MCP_TRANSPORT=sse MCP_HOST=0.0.0.0 MCP_PORT=8765 python -m webnovel_kb
 ```python
 ingest_novel(
     file_path="/path/to/novel.txt",
-    title="隐秘死角",
-    author="滚开",
-    genre="奇幻"
+    title="小说标题",
+    author="作者",
+    genre="类型"
 )
 ```
 
@@ -102,14 +80,14 @@ ingest_novel(
 │  Search Engine                                      │
 │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐  │
 │  │ Semantic│ │  BM25   │ │ Hybrid  │ │ Rerank  │  │
-│  │ (FAISS) │ │(Tantivy)│ │  融合   │ │ (LLM)   │  │
+│  │(ChromaDB)│ │(jieba)  │ │  融合   │ │ (LLM)   │  │
 │  └─────────┘ └─────────┘ └─────────┘ └─────────┘  │
 ├─────────────────────────────────────────────────────┤
 │  Storage                                            │
-│  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐  │
-│  │ ChromaDB    │ │  FAISS      │ │  Tantivy    │  │
-│  │ (向量存储)  │ │ (向量索引)  │ │ (全文索引)  │  │
-│  └─────────────┘ └─────────────┘ └─────────────┘  │
+│  ┌─────────────────────┐ ┌─────────────────────┐   │
+│  │ ChromaDB            │ │  JSON 文件           │   │
+│  │ (向量存储 + 索引)   │ │ (实体/关系/模式)     │   │
+│  └─────────────────────┘ └─────────────────────┘   │
 ├─────────────────────────────────────────────────────┤
 │  Knowledge Graph (NetworkX)                         │
 │  实体 · 关系 · 情节模式 · 写作模板                  │
@@ -163,17 +141,19 @@ webnovel_kb/
 ├── analysis/
 │   ├── humor.py        # 幽默分析
 │   └── style.py        # 风格分析
-├── utils/
-│   ├── dedupe.py       # 去重
-│   └── format.py       # 格式化
-└── scripts/
-    └── build_optimized_indexes.py
+└── utils/
+    ├── dedupe.py       # 去重
+    └── format.py       # 格式化
 ```
+
+## 维护指南
+
+详见 [MAINTENANCE.md](./MAINTENANCE.md)
 
 ## 版本
 
 当前版本：1.5
 
-## License
+## 许可证
 
 MIT
