@@ -1,0 +1,25 @@
+[Unit]
+Description=WebNovel Knowledge Base MCP Server
+After=network.target
+
+[Service]
+Type=simple
+User=<your-user>
+WorkingDirectory=/path/to/webnovel-kb
+ExecStart=/path/to/webnovel-kb/venv/bin/python3 -m webnovel_kb
+Restart=on-failure
+RestartSec=10
+Environment=MCP_TRANSPORT=sse
+Environment=MCP_HOST=0.0.0.0
+Environment=MCP_PORT=8765
+Environment=WEBNOVEL_KB_DATA=/path/to/data
+Environment=LLM_API_KEY=your_api_key_here
+Environment=LLM_BASE_URL=your_embedding_api_url
+Environment=LLM_CHAT_BASE_URL=your_chat_api_url
+Environment=LLM_EMBEDDING_MODEL=your_embedding_model
+Environment=LLM_RERANK_MODEL=your_rerank_model
+Environment=LLM_CHAT_MODEL=your_chat_model
+Environment=LLM_EMBEDDING_DIMENSIONS=4096
+
+[Install]
+WantedBy=multi-user.target

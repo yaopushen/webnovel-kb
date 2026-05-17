@@ -1,0 +1,36 @@
+# Data
+webnovel_data/
+*.pkl
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtual Environment
+venv/
+.env/
+*.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Local config
+.env
+
+# Logs
+*.log
+MCP Servers Host.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ZIP archives
+*.zip
+*.tar.gz
