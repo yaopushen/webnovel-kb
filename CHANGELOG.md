@@ -8,9 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.9.1] - 2026-05-18
 
 ### Changed
-- 代码库去敏和去商业化处理
-- 移除特定商业平台API配置项，统一使用通用LLM配置
-- 准备 1.9.1 封存版本发布
+- 日志优化，文件轮转、分级配置、结构化输出
+- 移除 rank_bm25 + FAISS，纯 Tantivy+ChromaDB 
+- 为智能搜索加入网络搜索工具
 
 ## [1.8] - 2026-05-17
 
