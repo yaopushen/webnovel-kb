@@ -7,15 +7,15 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from webnovel_kb.config import (
-    XFYUN_API_KEY, XFYUN_BASE_URL,
-    XFYUN_EMBEDDING_MODEL, XFYUN_RERANK_MODEL, XFYUN_EMBEDDING_DIMENSIONS,
+    LLM_API_KEY, LLM_BASE_URL,
+    LLM_EMBEDDING_MODEL, LLM_RERANK_MODEL, LLM_EMBEDDING_DIMENSIONS,
 )
 
-os.environ.setdefault("XFYUN_API_KEY", XFYUN_API_KEY)
-os.environ.setdefault("XFYUN_BASE_URL", XFYUN_BASE_URL)
-os.environ.setdefault("XFYUN_EMBEDDING_MODEL", XFYUN_EMBEDDING_MODEL)
-os.environ.setdefault("XFYUN_RERANK_MODEL", XFYUN_RERANK_MODEL)
-os.environ.setdefault("XFYUN_EMBEDDING_DIMENSIONS", XFYUN_EMBEDDING_DIMENSIONS)
+os.environ.setdefault("LLM_API_KEY", LLM_API_KEY)
+os.environ.setdefault("LLM_BASE_URL", LLM_BASE_URL)
+os.environ.setdefault("LLM_EMBEDDING_MODEL", LLM_EMBEDDING_MODEL)
+os.environ.setdefault("LLM_RERANK_MODEL", LLM_RERANK_MODEL)
+os.environ.setdefault("LLM_EMBEDDING_DIMENSIONS", str(LLM_EMBEDDING_DIMENSIONS))
 
 from webnovel_kb.server import kb
 
@@ -30,8 +30,8 @@ if Path(CATALOG_FILE).exists():
 novels_path = Path(NOVELS_DIR)
 txt_files = sorted(novels_path.glob("*.txt"))
 print(f"Found {len(txt_files)} novels to ingest")
-print(f"Embedding: Xfyun Qwen8B (model={os.environ['XFYUN_EMBEDDING_MODEL']}, dim={os.environ['XFYUN_EMBEDDING_DIMENSIONS']})")
-print(f"Rerank: Xfyun Qwen8B (model={os.environ['XFYUN_RERANK_MODEL']})")
+print(f"Embedding: (model={os.environ['LLM_EMBEDDING_MODEL']}, dim={os.environ['LLM_EMBEDDING_DIMENSIONS']})")
+print(f"Rerank: (model={os.environ['LLM_RERANK_MODEL']})")
 print()
 
 total_start = time.time()
@@ -68,5 +68,5 @@ print(f"Done! {success_count} success, {fail_count} failed")
 print(f"Total time: {total_elapsed:.1f}s")
 print(f"Total novels: {stats['total_novels']}")
 print(f"Total chunks: {stats['total_chunks']}")
-print(f"BM25 ready: {stats['bm25_ready']}")
-print(f"Reranker: {'Xfyun Qwen8B' if kb.reranker else 'None'}")
+print(f"Tantivy ready: {stats.get('tantivy_ready', stats.get('bm25_ready', False))}")
+print(f"Reranker: {'Enabled' if kb.reranker else 'None'}")

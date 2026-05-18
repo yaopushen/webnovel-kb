@@ -1,4 +1,4 @@
-"""API client wrappers for XFYUN (iFlytek) embedding, rerank, and chat services."""
+"""API client wrappers for embedding, rerank, and chat services."""
 import json
 import hashlib
 import time
@@ -12,19 +12,19 @@ import chromadb
 from chromadb.api.types import EmbeddingFunction
 
 from webnovel_kb.config import (
-    XFYUN_API_KEY, XFYUN_BASE_URL, XFYUN_CHAT_BASE_URL,
-    XFYUN_EMBEDDING_MODEL, XFYUN_RERANK_MODEL,
-    XFYUN_EMBEDDING_DIMENSIONS, XFYUN_CHAT_MODEL
+    LLM_API_KEY, LLM_BASE_URL, LLM_CHAT_BASE_URL,
+    LLM_EMBEDDING_MODEL, LLM_RERANK_MODEL,
+    LLM_EMBEDDING_DIMENSIONS, LLM_CHAT_MODEL
 )
 
 logger = logging.getLogger("webnovel-kb")
 
 
-class XfyunEmbeddingFunction(EmbeddingFunction):
+class RemoteEmbeddingFunction(EmbeddingFunction):
     _api_semaphore = threading.Semaphore(4)
 
-    def __init__(self, api_key: str = XFYUN_API_KEY, base_url: str = XFYUN_BASE_URL,
-                 model: str = XFYUN_EMBEDDING_MODEL, dimensions: int = XFYUN_EMBEDDING_DIMENSIONS,
+    def __init__(self, api_key: str = LLM_API_KEY, base_url: str = LLM_BASE_URL,
+                 model: str = LLM_EMBEDDING_MODEL, dimensions: int = LLM_EMBEDDING_DIMENSIONS,
                  batch_size: int = 20, max_retries: int = 3, cache_path: str = ""):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -103,7 +103,7 @@ class XfyunEmbeddingFunction(EmbeddingFunction):
 
     def _call_api(self, texts: list[str]) -> list[list[float]]:
         if not self.api_key:
-            raise ValueError("XFYUN_API_KEY not set")
+            raise ValueError("LLM_API_KEY not set")
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}"
@@ -177,9 +177,9 @@ class XfyunEmbeddingFunction(EmbeddingFunction):
         return [emb for _, emb in all_embeddings]
 
 
-class XfyunReranker:
-    def __init__(self, api_key: str = XFYUN_API_KEY, base_url: str = XFYUN_BASE_URL,
-                 model: str = XFYUN_RERANK_MODEL):
+class RemoteReranker:
+    def __init__(self, api_key: str = LLM_API_KEY, base_url: str = LLM_BASE_URL,
+                 model: str = LLM_RERANK_MODEL):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -222,9 +222,9 @@ class XfyunReranker:
             return []
 
 
-class XfyunChat:
-    def __init__(self, api_key: str = XFYUN_API_KEY, base_url: str = XFYUN_CHAT_BASE_URL,
-                 model: str = XFYUN_CHAT_MODEL):
+class RemoteChat:
+    def __init__(self, api_key: str = LLM_API_KEY, base_url: str = LLM_CHAT_BASE_URL,
+                 model: str = LLM_CHAT_MODEL):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -285,12 +285,12 @@ class FallbackEmbeddingFunction(EmbeddingFunction):
 
 
 def _create_embedding_function(cache_path: str = "") -> EmbeddingFunction:
-    if XFYUN_API_KEY:
-        return XfyunEmbeddingFunction(
-            api_key=XFYUN_API_KEY,
-            base_url=XFYUN_BASE_URL,
-            model=XFYUN_EMBEDDING_MODEL,
-            dimensions=XFYUN_EMBEDDING_DIMENSIONS,
+    if LLM_API_KEY:
+        return RemoteEmbeddingFunction(
+            api_key=LLM_API_KEY,
+            base_url=LLM_BASE_URL,
+            model=LLM_EMBEDDING_MODEL,
+            dimensions=LLM_EMBEDDING_DIMENSIONS,
             cache_path=cache_path
         )
     else:

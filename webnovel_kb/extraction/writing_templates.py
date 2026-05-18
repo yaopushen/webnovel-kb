@@ -5,45 +5,41 @@ from dataclasses import asdict
 
 from webnovel_kb.data_models import WritingTemplate
 from webnovel_kb.prompts import WRITING_TEMPLATE_EXTRACTION_PROMPT
-from webnovel_kb.utils.logging_config import get_logger
-from webnovel_kb.utils.exceptions import ExtractionError
-
-logger = get_logger("extraction.writing_templates")
 
 
 class WritingTemplateExtractor:
     """写作模板提取器。"""
-
+    
     def __init__(self, chat, collection, writing_templates: list, add_template_fn, save_state_fn):
         self.chat = chat
         self.collection = collection
         self.writing_templates = writing_templates
         self.add_template = add_template_fn
         self.save_state = save_state_fn
-
+    
     def extract(self, novel_title: str, novel_id: str, exact_title: str,
                 max_chunks: int = 15) -> Dict[str, Any]:
         """提取写作模板。"""
         if not self.chat:
-            raise ExtractionError("Chat API未配置，无法自动提取写作模板。请设置LLM_API_KEY。")
-
+            return {"error": "Chat API未配置，无法自动提取写作模板。请设置LLM_API_KEY。"}
+        
         all_chunks_data = self.collection.get(
             where={"title": exact_title},
             include=["documents", "metadatas"]
         )
         if not all_chunks_data or not all_chunks_data.get("documents"):
-            raise ExtractionError(f"未找到小说内容: {exact_title}")
-
+            return {"error": f"未找到小说内容: {exact_title}"}
+        
         paired = list(zip(
             all_chunks_data["documents"],
             all_chunks_data["metadatas"] or [{}] * len(all_chunks_data["documents"])
         ))
         paired.sort(key=lambda x: x[1].get("chunk_index", 0))
-
+        
         total_chunks = len(paired)
         step = max(1, total_chunks // max_chunks)
         sampled = paired[::step][:max_chunks]
-
+        
         all_templates = []
         for chunk_text, meta in sampled:
             chapter_title = meta.get("chapter_title", "")
@@ -54,14 +50,14 @@ class WritingTemplateExtractor:
             response = self.chat.chat(messages, temperature=0.1)
             if response:
                 self._parse_template_response(response, novel_title, chapter_title, all_templates)
-
+        
         return {
             "novel": novel_title,
             "templates_extracted": len(all_templates),
             "templates": all_templates[:20]
         }
-
-    def _parse_template_response(self, response: str, novel_title: str,
+    
+    def _parse_template_response(self, response: str, novel_title: str, 
                                   chapter_title: str, all_templates: list) -> None:
         """解析写作模板响应。"""
         template_matches = re.findall(

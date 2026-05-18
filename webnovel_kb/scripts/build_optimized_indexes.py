@@ -1,33 +1,32 @@
 #!/usr/bin/env python3
 """
-Build optimized search indexes (Tantivy + FAISS) from existing ChromaDB data.
+Build optimized search index (Tantivy BM25) from existing ChromaDB data.
 Run this once after deploying the new search engines.
+v1.9: FAISS removed (GPU incompatible), rank_bm25 removed (memory hog).
 """
 import os
 import sys
 import time
 import argparse
-import subprocess
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-import numpy as np
-from webnovel_kb.search_engines import TANTIVY_AVAILABLE, FAISS_AVAILABLE, TantivyBM25, FAISSVectorStore, tokenize
-from webnovel_kb.config import XFYUN_EMBEDDING_DIMENSIONS, XFYUN_API_KEY, XFYUN_BASE_URL, XFYUN_CHAT_BASE_URL
+from webnovel_kb.search_engines import TANTIVY_AVAILABLE, TantivyBM25, tokenize
 
-os.environ.setdefault("XFYUN_API_KEY", XFYUN_API_KEY or "")
-os.environ.setdefault("XFYUN_BASE_URL", XFYUN_BASE_URL or "")
-os.environ.setdefault("XFYUN_CHAT_BASE_URL", XFYUN_CHAT_BASE_URL or "")
+os.environ.setdefault("LLM_API_KEY", "")
+os.environ.setdefault("LLM_BASE_URL", "")
+os.environ.setdefault("LLM_CHAT_BASE_URL", "")
+
 
 def build_tantivy_index(data_dir: Path, collection) -> int:
     if not TANTIVY_AVAILABLE:
-        print("Tantivy not available, skipping")
+        print("ERROR: Tantivy not available. Install it first:")
+        print("  pip install tantivy")
         return 0
     
     tantivy_dir = data_dir / "tantivy_index"
     
-    # Check if already built
     if tantivy_dir.exists() and any(tantivy_dir.iterdir()):
         idx = TantivyBM25(tantivy_dir)
         if idx.doc_count > 0:
@@ -67,77 +66,23 @@ def build_tantivy_index(data_dir: Path, collection) -> int:
     
     return idx.doc_count
 
-def build_faiss_index(data_dir: Path, collection) -> int:
-    if not FAISS_AVAILABLE:
-        print("FAISS not available, skipping")
-        return 0
-    
-    faiss_path = data_dir / "faiss_index.faiss"
-    
-    # Check if already built
-    if faiss_path.exists():
-        store = FAISSVectorStore(faiss_path, dimensions=XFYUN_EMBEDDING_DIMENSIONS)
-        if store.load_index() and store.count > 0:
-            print(f"FAISS index already exists with {store.count} vectors")
-            return store.count
-    
-    print("Building FAISS index...")
-    total = collection.count()
-    if total == 0:
-        print("No documents in collection")
-        return 0
-    
-    store = FAISSVectorStore(faiss_path, dimensions=XFYUN_EMBEDDING_DIMENSIONS)
-    all_vectors = []
-    all_ids = []
-    all_texts = []
-    all_metas = []
-    batch_size = 500
-    
-    for offset in range(0, total, batch_size):
-        batch = collection.get(
-            include=["documents", "metadatas", "embeddings"],
-            limit=batch_size,
-            offset=offset
-        )
-        if batch and batch.get("ids"):
-            embeddings = batch.get("embeddings")
-            for i, cid in enumerate(batch["ids"]):
-                emb = embeddings[i] if embeddings is not None else None
-                if emb is not None and len(emb) > 0:
-                    all_vectors.append(emb)
-                    all_ids.append(cid)
-                    all_texts.append(batch["documents"][i] if batch.get("documents") else "")
-                    all_metas.append(batch["metadatas"][i] if batch.get("metadatas") else {})
-        
-        if offset % 5000 == 0:
-            print(f"  FAISS progress: {len(all_vectors)}/{total}")
-    
-    if all_vectors:
-        vectors = np.array(all_vectors, dtype=np.float32)
-        store.build_index(vectors, all_ids, all_texts, all_metas)
-        print(f"  FAISS built: {store.count} vectors")
-    
-    return store.count
 
 def main():
-    parser = argparse.ArgumentParser(description="Build optimized search indexes")
+    parser = argparse.ArgumentParser(description="Build Tantivy BM25 index")
     parser.add_argument("--data-dir", type=str, default="./webnovel_data",
                         help="Data directory path")
     args = parser.parse_args()
     
     print(f"Tantivy available: {TANTIVY_AVAILABLE}")
-    print(f"FAISS available: {FAISS_AVAILABLE}")
     
-    if not TANTIVY_AVAILABLE and not FAISS_AVAILABLE:
-        print("ERROR: Neither Tantivy nor FAISS is available. Install them first:")
-        print("  pip install tantivy faiss-cpu")
+    if not TANTIVY_AVAILABLE:
+        print("ERROR: Tantivy not available. Install it first:")
+        print("  pip install tantivy")
         return 1
     
     data_dir = Path(args.data_dir)
     print(f"Data directory: {data_dir}")
     
-    # Import ChromaDB directly to avoid triggering the full KB init
     import chromadb
     from webnovel_kb.api.clients import create_embedding_function
     
@@ -157,19 +102,12 @@ def main():
     
     t0 = time.time()
     tantivy_count = build_tantivy_index(data_dir, collection)
-    faiss_count = build_faiss_index(data_dir, collection)
     elapsed = time.time() - t0
     
     print(f"\n{'='*50}")
     print(f"Build complete in {elapsed:.1f}s")
     print(f"{'='*50}")
     print(f"Tantivy documents: {tantivy_count}")
-    print(f"FAISS vectors: {faiss_count}")
-    
-    # Report file sizes
-    faiss_path = data_dir / "faiss_index.faiss"
-    if faiss_path.exists():
-        print(f"FAISS index file: {faiss_path.stat().st_size / 1024 / 1024:.1f} MB")
     
     tantivy_dir = data_dir / "tantivy_index"
     if tantivy_dir.exists():
@@ -179,9 +117,15 @@ def main():
     bm25_path = data_dir / "bm25_index.pkl"
     if bm25_path.exists():
         bm25_size = bm25_path.stat().st_size / 1024 / 1024
-        print(f"\nOld BM25 index: {bm25_size:.1f} MB (can be deleted after verification)")
+        print(f"\nOld rank_bm25 cache: {bm25_size:.1f} MB (can be deleted after verification)")
+    
+    faiss_path = data_dir / "faiss_index.faiss"
+    if faiss_path.exists():
+        faiss_size = faiss_path.stat().st_size / 1024 / 1024
+        print(f"Old FAISS index: {faiss_size:.1f} MB (can be deleted after verification)")
     
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

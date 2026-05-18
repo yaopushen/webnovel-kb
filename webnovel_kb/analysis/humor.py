@@ -3,26 +3,23 @@ import re
 from typing import List, Dict, Any
 
 from webnovel_kb.prompts import HUMOR_SCENE_EXTRACTION_PROMPT
-from webnovel_kb.utils.logging_config import get_logger
-
-logger = get_logger("analysis.humor")
 
 
 class HumorExtractor:
     """幽默场景提取器。"""
-
+    
     def __init__(self, chat):
         self.chat = chat
-
+    
     def extract(self, texts: List[str], metas: List[dict], exact_title: str) -> List[Dict[str, Any]]:
         """提取幽默场景。"""
         if not self.chat or not texts:
             return []
-
+        
         n = len(texts)
         sample_indices = [0, n//4, n//2, n*3//4, n-1] if n >= 5 else list(range(n))
         humor_scenes = []
-
+        
         for idx in sample_indices:
             if idx >= n:
                 continue
@@ -48,6 +45,6 @@ class HumorExtractor:
                             "snippet": snippet,
                             "analysis": analysis.strip()
                         })
-            except Exception as e:
-                logger.debug(f"Humor extraction failed for chunk {idx}: {e}")
+            except Exception:
+                pass
         return humor_scenes[:10]

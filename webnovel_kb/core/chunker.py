@@ -20,7 +20,8 @@ class TextChunker:
             r'(?:^|\n)(?:第[零一二三四五六七八九十百千万\d]+[章节回卷]'
             r'|Chapter\s+\d+'
             r'|chapter\s+\d+'
-            r'|\d{1,5}[\.、\s])',
+            r'|\d{1,5}[\.、\s]'
+            r'|\d{3,5})',
             re.IGNORECASE
         )
         chapter_positions = [(m.start(), m.group().strip()) for m in chapter_pattern.finditer(text)]

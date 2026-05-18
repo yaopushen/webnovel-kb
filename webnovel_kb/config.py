@@ -10,9 +10,10 @@ CHUNK_OVERLAP = 300
 LLM_API_KEY = os.environ.get("LLM_API_KEY", "")
 LLM_BASE_URL = os.environ.get("LLM_BASE_URL", "")
 LLM_CHAT_BASE_URL = os.environ.get("LLM_CHAT_BASE_URL", "")
+LLM_CHAT_API_KEY = os.environ.get("LLM_CHAT_API_KEY", "")
 LLM_EMBEDDING_MODEL = os.environ.get("LLM_EMBEDDING_MODEL", "")
 LLM_RERANK_MODEL = os.environ.get("LLM_RERANK_MODEL", "")
-LLM_EMBEDDING_DIMENSIONS = int(os.environ.get("LLM_EMBEDDING_DIMENSIONS", "512"))
+LLM_EMBEDDING_DIMENSIONS = int(os.environ.get("LLM_EMBEDDING_DIMENSIONS", "4096"))
 LLM_CHAT_MODEL = os.environ.get("LLM_CHAT_MODEL", "")
 
 EMBEDDING_CACHE_PATH = os.environ.get("EMBEDDING_CACHE_PATH", str(DATA_DIR / "embeddings_cache.pkl"))
@@ -27,3 +28,6 @@ LOG_FILE_LEVEL = os.environ.get("WEBNOVEL_KB_LOG_FILE_LEVEL", "")
 
 QUERY_CACHE_SIZE = int(os.environ.get("WEBNOVEL_KB_QUERY_CACHE_SIZE", "256"))
 QUERY_CACHE_TTL = int(os.environ.get("WEBNOVEL_KB_QUERY_CACHE_TTL", "300"))
+
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
+

@@ -10,6 +10,7 @@ class NovelMeta:
     word_count: int = 0
     file_path: str = ""
     chunk_count: int = 0
+    chapter_count: int = 0
 
 
 @dataclass

@@ -1,24 +1,24 @@
 """Style analysis for novels."""
 import re
 import math
+import logging
 from typing import Dict, List, Any
 from dataclasses import asdict
 
 from webnovel_kb.data_models import StyleProfile
-from webnovel_kb.utils.logging_config import get_logger
 
-logger = get_logger("analysis.style")
+logger = logging.getLogger("webnovel-kb")
 
 
 class StyleAnalyzer:
     """风格分析器。"""
-
+    
     def __init__(self, chat, collection, style_profiles: dict, save_state_fn):
         self.chat = chat
         self.collection = collection
         self.style_profiles = style_profiles
         self.save_state = save_state_fn
-
+        
         self.dialogue_re_list = [
             re.compile(r'\u201c(.+?)\u201d'),
             re.compile(r'\u300c(.+?)\u300d'),
@@ -27,7 +27,7 @@ class StyleAnalyzer:
         self.inner_re_list = [
             re.compile(r'\u300e(.+?)\u300f'),
         ]
-
+        
         self.humor_patterns = [
             r"吐槽", r"自嘲", r"无语", r"呵呵", r"呵呵呵",
             r"这什么鬼", r"搞什么", r"算了", r"算了算了", r"真香",
@@ -43,7 +43,7 @@ class StyleAnalyzer:
             r"松了口", r"放松", r"平静", r"安宁", r"悠闲",
             r"舒适", r"温暖", r"安心", r"笑了", r"轻松"
         ]
-
+        
         self.ai_patterns = [
             re.compile(r'不禁(?:心头)?(?:一)?(?:颤|愣|动|笑|叹|悲|怒|惊|寒|凛)'),
             re.compile(r'缓缓地?(?:站|走|转|抬|放|伸|收|退|移|开|说|道|开口|闭眼|睁眼|点头|摇头|起身|坐下)'),
@@ -67,7 +67,7 @@ class StyleAnalyzer:
             re.compile(r'不禁(?:让|令|使)人'),
             re.compile(r'令人(?:不禁|难以)?(?:心|生|感|觉)'),
         ]
-
+    
     def analyze(self, novel_title: str, novel_id: str, exact_title: str,
                 humor_extractor=None) -> Dict[str, Any]:
         """分析小说风格。"""
@@ -75,10 +75,10 @@ class StyleAnalyzer:
             where={"title": exact_title},
             include=["documents", "metadatas"]
         )
-
+        
         if not all_chunks_data or not all_chunks_data.get("documents"):
             return {"error": f"未找到小说内容: {exact_title}"}
-
+        
         paired = list(zip(
             all_chunks_data["documents"],
             all_chunks_data["metadatas"] or [{}] * len(all_chunks_data["documents"])
@@ -86,47 +86,47 @@ class StyleAnalyzer:
         paired.sort(key=lambda x: x[1].get("chunk_index", 0))
         all_texts = [p[0] for p in paired]
         all_metas = [p[1] for p in paired]
-
+        
         total_chars = sum(len(t) for t in all_texts)
         if total_chars == 0:
             return {"error": "文本为空"}
-
+        
         dialogue_chars = 0
         inner_chars = 0
         sentence_lengths = []
-
+        
         for text in all_texts:
             sentences = re.split(r'[。！？\n]', text)
             lengths = [len(s.strip()) for s in sentences if s.strip()]
             sentence_lengths.extend(lengths)
-
+            
             for dre in self.dialogue_re_list:
                 for m in dre.finditer(text):
                     dialogue_chars += len(m.group(1))
             for ire in self.inner_re_list:
                 for m in ire.finditer(text):
                     inner_chars += len(m.group(1))
-
+        
         avg_sent_len = round(sum(sentence_lengths) / len(sentence_lengths), 1) if sentence_lengths else 0
         dialogue_ratio = round(dialogue_chars / total_chars, 3) if total_chars else 0
         inner_ratio = round(inner_chars / total_chars, 3) if total_chars else 0
-
+        
         section_breakdown = self._analyze_sections(all_texts, all_metas)
-
+        
         humor_scenes = []
         if humor_extractor:
             humor_scenes = humor_extractor.extract(all_texts, all_metas, exact_title)
-
+        
         sample_passages = self._extract_sample_passages(all_texts, all_metas)
-
+        
         ai_score, matched_humor = self._analyze_ai_patterns(all_texts, total_chars)
-
+        
         tension_count, relax_count, chapter_hook_rate, pace_type = self._analyze_pacing(
             all_texts, all_metas
         )
-
+        
         narrative_perspective = self._analyze_perspective(all_texts)
-
+        
         profile = StyleProfile(
             avg_sentence_len=avg_sent_len,
             dialogue_ratio=dialogue_ratio,
@@ -154,21 +154,21 @@ class StyleAnalyzer:
         self.style_profiles[novel_title] = profile
         self.save_state()
         return asdict(profile)
-
+    
     def _analyze_sections(self, texts: list, metas: list) -> list:
         """分析各段落统计。"""
         sections = []
         n = len(texts)
         if n == 0:
             return sections
-
+        
         segments = [
             ("开篇(前10%)", texts[:max(1, n//10)]),
             ("发展(40%-50%)", texts[max(1, n*2//5):max(2, n//2)]),
             ("高潮(70%-80%)", texts[max(1, n*7//10):max(2, n*4//5)]),
             ("收尾(后10%)", texts[max(1, n*9//10):]),
         ]
-
+        
         for label, section_texts in segments:
             if not section_texts:
                 continue
@@ -183,7 +183,7 @@ class StyleAnalyzer:
                         dialogue_chars += len(m.group(1))
             avg_sl = round(sum(sentences) / len(sentences), 1) if sentences else 0
             d_ratio = round(dialogue_chars / total_chars, 3) if total_chars else 0
-
+            
             sample_idx = n//10 if label.startswith("开篇") else (n//2 if label.startswith("发展") else (n*3//4 if label.startswith("高潮") else n*19//20))
             sample_idx = min(sample_idx, n-1)
             sample_text = texts[sample_idx][:800] if sample_idx < len(texts) else ""
@@ -197,7 +197,7 @@ class StyleAnalyzer:
                 "sample_text": sample_text,
             })
         return sections
-
+    
     def _extract_sample_passages(self, texts: list, metas: list) -> list:
         """提取样本段落。"""
         passages = []
@@ -207,7 +207,7 @@ class StyleAnalyzer:
                 "chapter": metas[i].get("chapter_title", "") if i < len(metas) else "",
                 "position": "opening"
             })
-
+        
         mid_idx = len(texts) // 2
         for j in range(min(3, len(texts) - mid_idx)):
             i = mid_idx + j
@@ -216,7 +216,7 @@ class StyleAnalyzer:
                 "chapter": metas[i].get("chapter_title", "") if i < len(metas) else "",
                 "position": "climax"
             })
-
+        
         for j in range(min(3, len(texts))):
             i = len(texts) - 3 + j
             if i >= 0:
@@ -226,12 +226,12 @@ class StyleAnalyzer:
                     "position": "ending"
                 })
         return passages
-
+    
     def _analyze_ai_patterns(self, texts: list, total_chars: int) -> tuple:
         """分析 AI 写作模式。"""
         ai_markers_count = 0
         matched_humor = []
-
+        
         for text in texts:
             for p in [re.compile(r) for r in self.humor_patterns]:
                 found = p.findall(text)
@@ -239,22 +239,22 @@ class StyleAnalyzer:
                     matched_humor.extend(found)
             for p in self.ai_patterns:
                 ai_markers_count += len(p.findall(text))
-
+        
         if ai_markers_count > 0 and total_chars > 0:
             markers_per_10k = ai_markers_count / (total_chars / 10000)
             ai_score = min(round(math.log1p(markers_per_10k) * 2.5, 2), 10.0)
         else:
             ai_score = 0.0
-
+        
         return ai_score, matched_humor
-
+    
     def _analyze_pacing(self, texts: list, metas: list) -> tuple:
         """分析节奏。"""
         tension_count = 0
         relax_count = 0
         chapter_end_tension = 0
         chapter_end_count = 0
-
+        
         chapters = {}
         for i, meta in enumerate(metas):
             ch = meta.get("chapter_title", "")
@@ -262,13 +262,13 @@ class StyleAnalyzer:
                 if ch not in chapters:
                     chapters[ch] = []
                 chapters[ch].append(i)
-
+        
         for text in texts:
             for p in [re.compile(r) for r in self.tension_patterns]:
                 tension_count += len(p.findall(text))
             for p in [re.compile(r) for r in self.relax_patterns]:
                 relax_count += len(p.findall(text))
-
+        
         for ch_name, chunk_indices in chapters.items():
             if len(chunk_indices) >= 1:
                 last_idx = chunk_indices[-1]
@@ -280,9 +280,9 @@ class StyleAnalyzer:
                     if tail_tension > tail_relax:
                         chapter_end_tension += 1
                     chapter_end_count += 1
-
+        
         chapter_hook_rate = round(chapter_end_tension / chapter_end_count, 2) if chapter_end_count > 0 else 0
-
+        
         if tension_count + relax_count > 0:
             tr_val = tension_count / (tension_count + relax_count)
             if tr_val > 0.7:
@@ -293,9 +293,9 @@ class StyleAnalyzer:
                 pace_type = "舒缓叙事型"
         else:
             pace_type = "无法判断"
-
+        
         return tension_count, relax_count, chapter_hook_rate, pace_type
-
+    
     def _analyze_perspective(self, texts: list) -> str:
         """分析叙事视角。"""
         narrative_perspective = "需LLM深度分析"

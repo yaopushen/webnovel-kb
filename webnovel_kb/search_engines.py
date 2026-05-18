@@ -1,5 +1,6 @@
 """
-Optimized search engines: Tantivy for BM25, FAISS for vectors.
+Optimized search engines: Tantivy for BM25, ChromaDB for vectors.
+v1.9: Removed FAISS (GPU incompatible with GTX 1060) and rank_bm25 (memory hog).
 """
 from __future__ import annotations
 import os
@@ -25,13 +26,6 @@ try:
 except ImportError:
     tantivy = None
     TANTIVY_AVAILABLE = False
-
-try:
-    import faiss
-    FAISS_AVAILABLE = True
-except ImportError:
-    faiss = None
-    FAISS_AVAILABLE = False
 
 
 STOPWORDS = {"的", "了", "在", "是", "我", "有", "和", "就", "不", "人", "都", "一", "一个",
@@ -65,6 +59,51 @@ class TantivyBM25:
         self._id_to_meta: Dict[str, dict] = {}
         self._id_to_text: Dict[str, str] = {}
         self._lock = threading.RLock()
+        
+        if TANTIVY_AVAILABLE:
+            self._try_load_existing_index()
+        
+    def _try_load_existing_index(self):
+        """尝试加载已存在的索引。"""
+        try:
+            if any(self.index_dir.iterdir()):
+                schema = self._build_schema()
+                self._index = tantivy.Index(schema, path=str(self.index_dir))
+                self._index.reload()
+                self._searcher = self._index.searcher()
+                
+                self._doc_count = self._searcher.num_docs
+                
+                self._load_metadata_cache()
+        except Exception as e:
+            from webnovel_kb.utils.logging_config import get_logger
+            get_logger("engines.tantivy").warning(f"Failed to load existing index: {e}")
+    
+    def _load_metadata_cache(self):
+        """从索引中加载元数据缓存。"""
+        if not self._searcher or self._doc_count == 0:
+            return
+        try:
+            for doc_id in range(self._doc_count):
+                try:
+                    doc = self._searcher.doc(doc_id)
+                    if doc:
+                        chunk_id = doc.get_first("chunk_id")
+                        if chunk_id:
+                            self._id_to_meta[chunk_id] = {
+                                "title": doc.get_first("title") or "",
+                                "author": doc.get_first("author") or "",
+                                "genre": doc.get_first("genre") or "",
+                                "chapter_title": doc.get_first("chapter_title") or "",
+                                "novel_id": doc.get_first("novel_id") or "",
+                                "chunk_index": doc.get_first("chunk_index") or 0
+                            }
+                            self._id_to_text[chunk_id] = doc.get_first("text") or ""
+                except Exception:
+                    continue
+        except Exception as e:
+            from webnovel_kb.utils.logging_config import get_logger
+            get_logger("engines.tantivy").warning(f"Failed to load metadata cache: {e}")
         
     def _build_schema(self) -> tantivy.Schema:
         builder = tantivy.SchemaBuilder()
@@ -138,7 +177,11 @@ class TantivyBM25:
         
         output = []
         for hit in results.hits:
-            doc = self._searcher.doc(hit.doc_address)
+            doc_addr = hit.doc_address if hasattr(hit, 'doc_address') else (hit[1] if isinstance(hit, tuple) and len(hit) > 1 else None)
+            hit_score = hit.score if hasattr(hit, 'score') else (hit[0] if isinstance(hit, tuple) else 0.0)
+            if doc_addr is None:
+                continue
+            doc = self._searcher.doc(doc_addr)
             chunk_id = doc.get_first("chunk_id")
             
             meta = self._id_to_meta.get(chunk_id, {
@@ -162,7 +205,7 @@ class TantivyBM25:
                 chunk_id=chunk_id,
                 text=text,
                 metadata=meta,
-                score=hit.score,
+                score=hit_score,
                 source=source
             ))
             
@@ -201,139 +244,6 @@ class TantivyBM25:
         return self._doc_count
 
 
-class FAISSVectorStore:
-    def __init__(self, index_path: Path, dimensions: int = 4096, use_mmap: bool = True):
-        self.index_path = Path(index_path)
-        self.index_path.parent.mkdir(parents=True, exist_ok=True)
-        self.dimensions = dimensions
-        self.use_mmap = use_mmap
-        self._index: Optional[faiss.Index] = None
-        self._id_map: Dict[int, str] = {}
-        self._id_to_meta: Dict[str, dict] = {}
-        self._id_to_text: Dict[str, str] = {}
-        self._next_id = 0
-        self._lock = threading.RLock()
-        
-        self._meta_path = self.index_path.with_suffix(".meta.json")
-    
-    def build_index(self, vectors: np.ndarray, chunk_ids: List[str],
-                    texts: List[str], metas: List[dict]):
-        if not FAISS_AVAILABLE:
-            raise RuntimeError("FAISS not installed. Run: pip install faiss-cpu")
-        
-        with self._lock:
-            n = len(chunk_ids)
-            assert vectors.shape[0] == n
-            assert vectors.shape[1] == self.dimensions
-            
-            quantizer = faiss.IndexFlatIP(self.dimensions)
-            self._index = faiss.IndexIDMap(quantizer)
-            
-            ids = np.arange(n, dtype=np.int64)
-            self._index.add_with_ids(vectors.astype(np.float32), ids)
-            
-            self._id_map = {i: cid for i, cid in enumerate(chunk_ids)}
-            self._id_to_meta = {cid: m for cid, m in zip(chunk_ids, metas)}
-            self._id_to_text = {cid: t for cid, t in zip(chunk_ids, texts)}
-            self._next_id = n
-            
-            self._save_index()
-    
-    def _save_index(self):
-        faiss.write_index(self._index, str(self.index_path))
-        with open(self._meta_path, "w", encoding="utf-8") as f:
-            json.dump({
-                "id_map": self._id_map,
-                "next_id": self._next_id,
-                "id_to_meta": self._id_to_meta,
-                "id_to_text": self._id_to_text
-            }, f, ensure_ascii=False)
-    
-    def load_index(self):
-        if not self.index_path.exists():
-            return False
-        
-        with self._lock:
-            flags = faiss.IO_FLAG_MMAP if self.use_mmap else 0
-            self._index = faiss.read_index(str(self.index_path), flags)
-            
-            if self._meta_path.exists():
-                with open(self._meta_path, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    self._id_map = {int(k): v for k, v in data.get("id_map", {}).items()}
-                    self._next_id = data.get("next_id", 0)
-                    self._id_to_meta = data.get("id_to_meta", {})
-                    self._id_to_text = data.get("id_to_text", {})
-            return True
-    
-    def search(self, query_vector: np.ndarray, n_results: int = 10,
-               novel_filter: Optional[str] = None,
-               genre_filter: Optional[str] = None) -> List[SearchResult]:
-        if self._index is None:
-            return []
-        
-        q = query_vector.reshape(1, -1).astype(np.float32)
-        D, I = self._index.search(q, n_results * 3)
-        
-        output = []
-        for i, (score, idx) in enumerate(zip(D[0], I[0])):
-            if idx < 0:
-                continue
-            
-            chunk_id = self._id_map.get(int(idx))
-            if not chunk_id:
-                continue
-            
-            meta = self._id_to_meta.get(chunk_id, {})
-            if novel_filter and meta.get("title") != novel_filter:
-                continue
-            if genre_filter and meta.get("genre") != genre_filter:
-                continue
-            
-            text = self._id_to_text.get(chunk_id, "")
-            source = f"{meta.get('title', '')} - {meta.get('author', '')} [{meta.get('chapter_title', '') or 'chunk ' + str(meta.get('chunk_index', ''))}]"
-            
-            output.append(SearchResult(
-                chunk_id=chunk_id,
-                text=text,
-                metadata=meta,
-                score=float(score),
-                source=source
-            ))
-            
-            if len(output) >= n_results:
-                break
-        
-        return output
-    
-    def add_vector(self, chunk_id: str, vector: np.ndarray, text: str, metadata: dict):
-        with self._lock:
-            if self._index is None:
-                quantizer = faiss.IndexFlatIP(self.dimensions)
-                self._index = faiss.IndexIDMap(quantizer)
-            
-            vec = vector.reshape(1, -1).astype(np.float32)
-            idx = np.array([self._next_id], dtype=np.int64)
-            self._index.add_with_ids(vec, idx)
-            
-            self._id_map[self._next_id] = chunk_id
-            self._id_to_meta[chunk_id] = metadata
-            self._id_to_text[chunk_id] = text
-            self._next_id += 1
-    
-    def get_vector(self, chunk_id: str) -> Optional[np.ndarray]:
-        for idx, cid in self._id_map.items():
-            if cid == chunk_id:
-                vec = np.zeros(self.dimensions, dtype=np.float32)
-                self._index.reconstruct(int(idx), vec)
-                return vec
-        return None
-    
-    @property
-    def count(self) -> int:
-        return self._index.ntotal if self._index else 0
-
-
 class QueryCache:
     def __init__(self, ttl_seconds: int = 60, max_size: int = 1000):
         self.ttl = ttl_seconds
@@ -370,22 +280,77 @@ class QueryCache:
 
 
 class HybridSearchEngine:
-    def __init__(self, bm25: TantivyBM25, vector_store: FAISSVectorStore,
-                 cache_ttl: int = 60):
+    """Hybrid search using Tantivy BM25 + ChromaDB semantic (HNSW)."""
+
+    def __init__(self, bm25: TantivyBM25, collection,
+                 embedding_fn, cache_ttl: int = 60):
         self.bm25 = bm25
-        self.vector_store = vector_store
+        self.collection = collection
+        self.embedding_fn = embedding_fn
         self.cache = QueryCache(ttl_seconds=cache_ttl)
         self._executor = ThreadPoolExecutor(max_workers=2)
-    
-    def _sem_search(self, query_vector: np.ndarray, n_results: int,
-                    novel_filter: Optional[str], genre_filter: Optional[str]) -> List[SearchResult]:
-        return self.vector_store.search(query_vector, n_results, novel_filter, genre_filter)
-    
+
+    def _sem_search(self, query: str, n_results: int,
+                    novel_filter: Optional[str], genre_filter: Optional[str]) -> List[Dict[str, Any]]:
+        if not self.embedding_fn:
+            return []
+        try:
+            where = {}
+            if novel_filter:
+                where["title"] = novel_filter
+            if genre_filter:
+                where["genre"] = genre_filter
+            params = {"query_texts": [query], "n_results": n_results * 3,
+                      "include": ["documents", "metadatas", "distances"]}
+            if where:
+                params["where"] = where
+            results = self.collection.query(**params)
+            output = []
+            if results and results["documents"] and results["documents"][0]:
+                docs = results["documents"][0]
+                metas = results["metadatas"][0] if results["metadatas"] else [{}] * len(docs)
+                dists = results["distances"][0] if results["distances"] else [1.0] * len(docs)
+                for i, (doc, meta, dist) in enumerate(zip(docs, metas, dists)):
+                    output.append({
+                        "text": doc,
+                        "metadata": meta,
+                        "relevance": round(1.0 - float(dist), 4),
+                        "source": f"{meta.get('title','')} - {meta.get('author','')} [{meta.get('chapter_title','')}]"
+                    })
+            return output[:n_results * 3]
+        except Exception as e:
+            from webnovel_kb.utils.logging_config import get_logger
+            get_logger("engines.hybrid").warning(f"Semantic search failed: {e}")
+            return []
+
     def _bm25_search(self, query: str, n_results: int,
-                     novel_filter: Optional[str], genre_filter: Optional[str]) -> List[SearchResult]:
-        return self.bm25.search(query, n_results, novel_filter, genre_filter)
-    
-    def search(self, query: str, query_vector: np.ndarray, n_results: int = 10,
+                     novel_filter: Optional[str], genre_filter: Optional[str]) -> List[Dict[str, Any]]:
+        results = self.bm25.search(query, n_results * 3, novel_filter, genre_filter)
+        # BM25 索引存的是分词后文本，需要回 ChromaDB 取原始文本
+        output = []
+        chunk_ids = [r.chunk_id for r in results if r.chunk_id]
+        original_texts = {}
+        if chunk_ids and self.collection:
+            try:
+                unique_ids = list(set(chunk_ids))
+                fetched = self.collection.get(ids=unique_ids, include=["documents"])
+                if fetched and fetched.get("ids"):
+                    for cid, doc in zip(fetched["ids"], fetched["documents"]):
+                        original_texts[cid] = doc
+            except Exception as e:
+                from webnovel_kb.utils.logging_config import get_logger
+                get_logger("engines.hybrid").warning(f"Failed to fetch original texts from ChromaDB: {e}")
+        for r in results:
+            text = original_texts.get(r.chunk_id, r.text)
+            output.append({
+                "text": text,
+                "metadata": r.metadata,
+                "bm25_score": r.score,
+                "source": r.source
+            })
+        return output
+
+    def search(self, query: str, query_vector=None, n_results: int = 10,
                alpha: float = 0.6, novel_filter: Optional[str] = None,
                genre_filter: Optional[str] = None) -> List[dict]:
         filters = {"novel": novel_filter, "genre": genre_filter}
@@ -395,7 +360,7 @@ class HybridSearchEngine:
             return cached
         
         sem_future = self._executor.submit(
-            self._sem_search, query_vector, n_results * 3, novel_filter, genre_filter
+            self._sem_search, query, n_results * 3, novel_filter, genre_filter
         )
         bm25_future = self._executor.submit(
             self._bm25_search, query, n_results * 3, novel_filter, genre_filter
@@ -408,15 +373,17 @@ class HybridSearchEngine:
         rrf_scores: Dict[str, dict] = {}
         
         for rank, r in enumerate(sem_results):
-            key = r.chunk_id
+            key = r["metadata"].get("chunk_id", "") or \
+                  f"{r['metadata'].get('novel_id','')}_{r['metadata'].get('chunk_index',0)}"
             if key not in rrf_scores:
-                rrf_scores[key] = {"data": r, "sem_score": r.score, "bm25_score": 0}
+                rrf_scores[key] = {"data": r, "sem_score": r.get("relevance", 0), "bm25_score": 0}
             rrf_scores[key]["sem_rank"] = rank + 1
         
         for rank, r in enumerate(bm25_results):
-            key = r.chunk_id
+            key = r["metadata"].get("chunk_id", "") or \
+                  f"{r['metadata'].get('novel_id','')}_{r['metadata'].get('chunk_index',0)}"
             if key not in rrf_scores:
-                rrf_scores[key] = {"data": r, "sem_score": 0, "bm25_score": r.score}
+                rrf_scores[key] = {"data": r, "sem_score": 0, "bm25_score": r.get("bm25_score", 0)}
             rrf_scores[key]["bm25_rank"] = rank + 1
         
         for key in rrf_scores:
@@ -431,12 +398,12 @@ class HybridSearchEngine:
         for item in sorted_items[:n_results]:
             r = item["data"]
             output.append({
-                "text": r.text,
-                "metadata": r.metadata,
+                "text": r["text"],
+                "metadata": r["metadata"],
                 "relevance": item.get("sem_score", 0),
                 "bm25_score": item.get("bm25_score", 0),
                 "hybrid_score": item["hybrid_score"],
-                "source": r.source
+                "source": r.get("source", "")
             })
         
         self.cache.set(query, "hybrid", filters, output)

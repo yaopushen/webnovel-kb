@@ -1,14 +1,17 @@
 """Core Knowledge Base class that coordinates all modules."""
 import hashlib
+import json
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Optional, Dict, List, Any
 from dataclasses import asdict
 
 import chromadb
 import networkx as nx
+import requests
 
 from webnovel_kb.config import (
     DATA_DIR, LLM_API_KEY, LLM_BASE_URL, LLM_CHAT_BASE_URL,
@@ -39,6 +42,7 @@ from webnovel_kb.api.clients import RemoteEmbeddingFunction, RemoteReranker, Rem
 from webnovel_kb.utils.logging_config import get_logger
 from webnovel_kb.utils.exceptions import IngestError, SearchError, ExtractionError
 from webnovel_kb.utils.query_cache import QueryCache
+from webnovel_kb.utils.format import clean_text
 
 logger = get_logger("core.knowledge_base")
 
@@ -86,9 +90,11 @@ class WebNovelKnowledgeBase:
             )
 
             if LLM_CHAT_BASE_URL and LLM_CHAT_MODEL:
+                from webnovel_kb.config import LLM_CHAT_API_KEY
+                chat_key = LLM_CHAT_API_KEY or LLM_API_KEY
                 self.chat = RemoteChatClient(
                     api_url=LLM_CHAT_BASE_URL,
-                    api_key=LLM_API_KEY,
+                    api_key=chat_key,
                     model=LLM_CHAT_MODEL
                 )
 
@@ -178,24 +184,19 @@ class WebNovelKnowledgeBase:
         )
 
     def _setup_indexes(self):
-        """设置索引。"""
+        """设置索引（仅 TantivyBM25 + ChromaDB HNSW）。"""
         need_rebuild = self.index_manager.init_optimized_search()
 
         total = self.collection.count()
         if total > 0:
             logger.info(f"ChromaDB contains {total} chunks")
 
-            if need_rebuild or not (self.data_dir / "faiss_index.faiss").exists():
-                logger.info("Building optimized indexes...")
+            if need_rebuild:
+                logger.info("Building Tantivy index...")
                 self.index_manager.build_all_indexes(self.novels)
-
-            if not self.index_manager.bm25_corpus:
-                self._rebuild_bm25_from_chroma()
 
             self.index_manager.index_plot_patterns(self.plot_patterns)
             self.index_manager.index_entities(self.entities)
-
-        self.index_manager.preload_bm25_background()
 
     def _init_background_tasks(self):
         """初始化后台任务。"""
@@ -267,7 +268,6 @@ class WebNovelKnowledgeBase:
 
             self._query_cache.clear()
 
-            self._rebuild_bm25_from_chroma()
             self.index_manager.build_all_indexes(self.novels)
 
             return {
@@ -283,11 +283,6 @@ class WebNovelKnowledgeBase:
             logger.error(f"Failed to ingest novel: {e}", exc_info=True)
             raise IngestError(f"导入小说失败: {e}", detail=str(e))
 
-    def _rebuild_bm25_from_chroma(self):
-        """从 ChromaDB 重建 BM25。"""
-        self.index_manager._rebuild_bm25_from_chroma()
-        self.index_manager.bm25_corpus = self.index_manager.bm25_corpus
-        self.index_manager.bm25_metadata = self.index_manager.bm25_metadata
 
     def search(self, query: str, mode: str = "hybrid", n_results: int = 10,
                novel_filter: Optional[str] = None, genre_filter: Optional[str] = None,
@@ -481,7 +476,7 @@ class WebNovelKnowledgeBase:
             "total_entities": len(self.entities),
             "total_relationships": len(self.relationships),
             "total_templates": len(self.writing_templates),
-            "bm25_ready": self.index_manager.bm25_ready,
+            "tantivy_ready": self.index_manager.bm25_ready,
             "optimized_search": self.index_manager.use_optimized_search,
         }
         stats["query_cache"] = self._query_cache.stats()
@@ -760,6 +755,7 @@ class WebNovelKnowledgeBase:
 
         all_chunks.sort(key=lambda x: x[0])
         full_text = "\n".join(doc for _, doc, _ in all_chunks)
+        full_text = clean_text(full_text)
 
         return {
             "novel": exact_title,
@@ -825,6 +821,365 @@ class WebNovelKnowledgeBase:
                 novel_id = nid
                 break
         return exact_title, novel_id
+
+    def resolve_novel_title(self, novel_title: str) -> str:
+        """将模糊书名解析为精确书名。找不到时返回原始输入。"""
+        exact, _ = self._resolve_novel(novel_title)
+        return exact if exact else novel_title
+
+    def smart_search(self, query: str, n_results: int = 5,
+                     novel_filter: Optional[str] = None,
+                     genre_filter: Optional[str] = None,
+                     output_format: str = "compact") -> dict:
+        """智能搜索——LLM 函数调用模式：调用者→LLM→获取工具数据→回读→深度思考→返回结果。"""
+
+        if not self.chat:
+            return {
+                "error": "智能搜索需要配置全能 LLM 模型",
+                "hint": "请设置 LLM_CHAT_BASE_URL 和 LLM_CHAT_MODEL 环境变量"
+            }
+
+        novel_list = [f"{n.title}({n.author}/{n.genre})" for n in self.novels.values()]
+        novel_info = "\n".join(f"  - {n}" for n in novel_list) if novel_list else "无"
+        genre_list = sorted(set(n.genre for n in self.novels.values()))
+
+        system_prompt = f"""你是网文写作研究助手。你可以调用搜索工具获取知识库中的原文、情节模式、实体信息。
+
+当前知识库包含 {len(self.novels)} 本小说，类型包括 {', '.join(genre_list)}。
+可用小说：
+{novel_info}
+
+工作流程：
+1. 分析用户查询意图
+2. 调用合适的工具获取数据（可以并行调用多个工具）
+3. 基于原始数据，用你的知识分析提炼
+4. 返回有价值的分析结果
+
+注意：
+- 每次搜索返回的结果不会太多，如果第一轮没找到满意结果，可以换个角度再搜
+- 引用原文时要标注出处（书名、章节）"""
+
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_text",
+                    "description": "在全部小说正文中搜索文本内容。适合查找具体描写、场景、对话、情节等。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "搜索关键词或自然语言描述"},
+                            "mode": {
+                                "type": "string",
+                                "enum": ["hybrid", "semantic", "bm25"],
+                                "description": "hybrid=语义+关键词混合(推荐), semantic=模糊概念, bm25=精确关键词"
+                            },
+                            "novel": {"type": "string", "description": "限定书名，留空搜全部"},
+                            "genre": {"type": "string", "description": f"限定类型: {', '.join(genre_list)}"},
+                            "n_results": {"type": "integer", "description": "返回几条", "default": 5}
+                        },
+                        "required": ["query"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_patterns",
+                    "description": "搜索已提取的情节模式——悬念链、伏笔、反转、高潮等叙事手法。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "搜索描述"},
+                            "type_filter": {
+                                "type": "string",
+                                "description": "模式类型: 悬念链/跨距伏笔/反转铺垫/情感爆发点/世界观展开/力量体系引入/角色弧光/高潮设计/节奏控制/对比映衬/身份揭示"
+                            },
+                            "novel": {"type": "string", "description": "限定书名"},
+                            "n_results": {"type": "integer", "default": 5}
+                        },
+                        "required": ["query"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_entities",
+                    "description": "搜索实体——角色、功法、地点、组织、物品等。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "实体描述"},
+                            "entity_type": {"type": "string", "description": "类型: 角色/功法/组织/地点/物品/概念/事件/种族"},
+                            "novel": {"type": "string", "description": "限定书名"},
+                            "n_results": {"type": "integer", "default": 5}
+                        },
+                        "required": ["query"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "web_search",
+                    "description": "搜索互联网获取网文写作相关的外部知识——套路分析、写作技巧、行业趋势、读者偏好等。当知识库内部搜索不足以回答问题时使用。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "搜索关键词（中文或英文均可）"},
+                            "n_results": {"type": "integer", "description": "返回几条", "default": 5}
+                        },
+                        "required": ["query"]
+                    }
+                }
+            }
+        ]
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": query}
+        ]
+
+        MAX_ROUNDS = 200
+        thinking_chain = []
+
+        for round_num in range(MAX_ROUNDS):
+            try:
+                raw = self.chat.chat_raw(
+                    messages=messages,
+                    temperature=0.3,
+                    max_tokens=32768,
+                    tools=tools,
+                    tool_choice="auto"
+                )
+            except Exception as e:
+                logger.error(f"Smart search LLM call failed (round {round_num}): {e}")
+                return {
+                    "error": f"LLM 调用异常: {type(e).__name__}: {str(e)}",
+                    "fallback": self.unified_search.search(
+                        query, mode="hybrid", n_results=n_results,
+                        novel_filter=novel_filter, genre_filter=genre_filter,
+                        output_format=output_format
+                    )
+                }
+
+            if not raw:
+                return {
+                    "error": "LLM 返回空（未知原因）",
+                    "fallback": self.unified_search.search(
+                        query, mode="hybrid", n_results=n_results,
+                        novel_filter=novel_filter, genre_filter=genre_filter,
+                        output_format=output_format
+                    )
+                }
+
+            if raw.get("_error"):
+                status_code = raw.get("status_code", 0)
+                api_message = raw.get("message", "未知错误")
+                api_detail = raw.get("detail", "")
+                retry_after = raw.get("retry_after")
+
+                error_info = f"{api_message}"
+                if status_code:
+                    error_info = f"HTTP {status_code} — {api_message}"
+                if api_detail:
+                    error_info += f"\n详情: {api_detail[:200]}"
+                if retry_after:
+                    error_info += f"\n建议等待 {retry_after} 秒后重试"
+
+                if status_code == 429:
+                    error_info = f"LLM API 限流 (429) — 请求过于频繁"
+                    if retry_after:
+                        error_info += f"，建议等待 {retry_after} 秒后重试"
+                    elif api_detail:
+                        error_info += f"\n详情: {api_detail[:200]}"
+                elif status_code >= 500:
+                    error_info = f"LLM API 服务端错误 (HTTP {status_code})"
+                    if api_detail:
+                        error_info += f"\n详情: {api_detail[:200]}"
+                    error_info += "\n建议稍后重试"
+
+                logger.error(f"Smart search LLM error (round {round_num}): {error_info}")
+                return {
+                    "error": error_info,
+                    "fallback": self.unified_search.search(
+                        query, mode="hybrid", n_results=n_results,
+                        novel_filter=novel_filter, genre_filter=genre_filter,
+                        output_format=output_format
+                    )
+                }
+
+            choice = raw["choices"][0]
+            msg = choice.get("message", {})
+            finish_reason = choice.get("finish_reason", "")
+
+            if finish_reason == "stop" and not msg.get("tool_calls"):
+                answer = msg.get("content") or msg.get("reasoning_content", "")
+                return {
+                    "query": query,
+                    "思考链": thinking_chain,
+                    "结果": answer
+                }
+
+            tool_calls = msg.get("tool_calls", [])
+            if not tool_calls:
+                answer = msg.get("content") or msg.get("reasoning_content", "")
+                return {
+                    "query": query,
+                    "思考链": thinking_chain,
+                    "结果": answer
+                }
+
+            round_reasoning = msg.get("reasoning_content", "")
+
+            messages.append(msg)
+
+            def _exec_one_tool(tc):
+                func_name = tc["function"]["name"]
+                try:
+                    func_args = json.loads(tc["function"]["arguments"])
+                except json.JSONDecodeError as e:
+                    func_args = {}
+                    logger.warning(f"  [smart_search] {func_name}: JSON解析失败: {e}")
+                result_data = ""
+                try:
+                    if func_name == "search_text":
+                        sub_results = self.unified_search.search(
+                            query=func_args.get("query", query),
+                            mode=func_args.get("mode", "hybrid"),
+                            n_results=func_args.get("n_results", n_results),
+                            novel_filter=func_args.get("novel"),
+                            genre_filter=func_args.get("genre"),
+                            output_format="compact",
+                            max_content_length=300
+                        )
+                        result_data = json.dumps(sub_results, ensure_ascii=False)
+                    elif func_name == "search_patterns":
+                        resolved_novel = self.resolve_novel_title(func_args.get("novel", "")) if func_args.get("novel") else None
+                        sub_results = self.search_knowledge(
+                            query=func_args.get("query", ""),
+                            knowledge_type="plot_patterns",
+                            n_results=func_args.get("n_results", 5),
+                            type_filter=func_args.get("type_filter"),
+                            source_novel=resolved_novel,
+                            output_format="compact",
+                            max_content_length=300
+                        )
+                        result_data = json.dumps(sub_results, ensure_ascii=False)
+                    elif func_name == "search_entities":
+                        resolved_novel = self.resolve_novel_title(func_args.get("novel", "")) if func_args.get("novel") else None
+                        sub_results = self.search_entities_semantic(
+                            query=func_args.get("query", ""),
+                            n_results=func_args.get("n_results", 5),
+                            entity_type=func_args.get("entity_type"),
+                            source_novel=resolved_novel
+                        )
+                        if isinstance(sub_results, list):
+                            formatted = self._format_search_results(sub_results, "compact", 300)
+                            result_data = json.dumps(formatted, ensure_ascii=False)
+                        else:
+                            result_data = json.dumps(sub_results, ensure_ascii=False)
+                    elif func_name == "web_search":
+                        sub_results = self._tavily_search(
+                            query=func_args.get("query", query),
+                            n_results=func_args.get("n_results", 5)
+                        )
+                        result_data = json.dumps(sub_results, ensure_ascii=False)
+                    else:
+                        result_data = json.dumps({"error": f"未知工具: {func_name}"})
+                except Exception as e:
+                    error_type = type(e).__name__
+                    error_msg = str(e)
+                    logger.error(f"  [smart_search] {func_name} 执行失败: {error_type}: {error_msg}")
+                    result_data = json.dumps({
+                        "error": f"{error_type}: {error_msg}",
+                        "tool": func_name,
+                        "query": func_args.get("query", "")[:100],
+                    }, ensure_ascii=False)
+                logger.debug(f"  [smart_search] {func_name}({func_args.get('query','')[:60]}) -> {len(result_data)} chars")
+                return func_name, func_args, {"role": "tool", "tool_call_id": tc["id"], "content": result_data}
+
+            round_summary = []
+            tool_results = []
+            if len(tool_calls) == 1:
+                fn, fa, tr = _exec_one_tool(tool_calls[0])
+                round_summary.append(f"{fn}({fa.get('query','')[:60]})")
+                tool_results.append(tr)
+            else:
+                with ThreadPoolExecutor(max_workers=min(len(tool_calls), 10)) as executor:
+                    futures = {executor.submit(_exec_one_tool, tc): tc for tc in tool_calls}
+                    for future in as_completed(futures):
+                        try:
+                            fn, fa, tr = future.result()
+                            round_summary.append(f"{fn}({fa.get('query','')[:60]})")
+                            tool_results.append(tr)
+                        except Exception as e:
+                            tc = futures[future]
+                            func_name = tc["function"]["name"]
+                            error_type = type(e).__name__
+                            error_msg = str(e)
+                            logger.error(f"  [smart_search] 并行执行 {func_name} 失败: {error_type}: {error_msg}")
+                            round_summary.append(f"{func_name}(ERROR: {error_type})")
+                            tool_results.append({
+                                "role": "tool",
+                                "tool_call_id": tc["id"],
+                                "content": json.dumps({
+                                    "error": f"并行执行失败: {error_type}: {error_msg}",
+                                    "tool": func_name,
+                                }, ensure_ascii=False)
+                            })
+
+            thinking_chain.append({
+                "round": round_num + 1,
+                "思考": round_reasoning,
+                "调用": round_summary
+            })
+
+            messages.extend(tool_results)
+
+        answer = msg.get("content") or msg.get("reasoning_content", "") or "模型尚未生成最终答案"
+        return {
+            "query": query,
+            "思考链": thinking_chain,
+            "结果": answer
+        }
+
+    def _tavily_search(self, query: str, n_results: int = 5) -> list:
+        """调用 Tavily API 进行网络搜索。"""
+        from webnovel_kb.config import TAVILY_API_KEY
+        if not TAVILY_API_KEY:
+            return [{"error": "未配置 TAVILY_API_KEY 环境变量"}]
+        try:
+            resp = requests.post(
+                "https://api.tavily.com/search",
+                json={
+                    "api_key": TAVILY_API_KEY,
+                    "query": query,
+                    "max_results": n_results,
+                    "search_depth": "basic",
+                    "include_answer": True
+                },
+                timeout=30
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                results = []
+                if data.get("answer"):
+                    results.append({"type": "answer", "content": data["answer"]})
+                for item in data.get("results", []):
+                    results.append({
+                        "title": item.get("title", ""),
+                        "url": item.get("url", ""),
+                        "content": item.get("content", "")[:500]
+                    })
+                return results
+            else:
+                logger.error(f"Tavily API error: {resp.status_code} - {resp.text[:200]}")
+                return [{"error": f"Tavily API HTTP {resp.status_code}"}]
+        except Exception as e:
+            logger.error(f"Tavily search failed: {e}")
+            return [{"error": f"Tavily 搜索失败: {str(e)}"}]
 
     def _add_entity(self, name: str, entity_type: str, description: str,
                     source_novel: str, role: str = "", first_appearance: str = "",

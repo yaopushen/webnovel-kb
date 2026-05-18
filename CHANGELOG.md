@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.1] - 2026-05-18
+
+### Changed
+- 代码库去敏和去商业化处理
+- 移除特定商业平台API配置项，统一使用通用LLM配置
+- 准备 1.9.1 封存版本发布
+
 ## [1.8] - 2026-05-17
 
 ### Added

@@ -1,5 +1,5 @@
 """WebNovel Knowledge Base - MCP Server Entry Point."""
-__version__ = "1.5"
+__version__ = "1.0.0"
 
 from webnovel_kb.core.knowledge_base import WebNovelKnowledgeBase
 from webnovel_kb.api.clients import RemoteEmbeddingFunction, RemoteReranker, RemoteChatClient

@@ -1,4 +1,4 @@
-"""Hybrid search combining semantic and BM25."""
+"""Hybrid search combining semantic (ChromaDB HNSW) and BM25 (Tantivy)."""
 from typing import Optional, List, Dict, Any
 import numpy as np
 
@@ -8,7 +8,7 @@ logger = get_logger("search.hybrid")
 
 
 class HybridSearch:
-    """混合搜索，结合语义搜索和 BM25。"""
+    """混合搜索，结合语义搜索和 BM25（Tantivy + ChromaDB）。"""
 
     def __init__(self, index_manager, semantic_search, bm25_search, embedding_fn):
         self.index_manager = index_manager
@@ -25,14 +25,11 @@ class HybridSearch:
         genre_filter: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """执行混合搜索，使用 RRF 融合。"""
-        if self.index_manager.use_optimized_search and self.index_manager.hybrid_engine and self.index_manager.faiss_store:
-            if self.index_manager.faiss_store.count == 0:
-                self.index_manager._build_faiss_index()
-            if self.index_manager.faiss_store.count > 0:
-                query_vector = np.array(self.embedding_fn([query])[0], dtype=np.float32)
-                return self.index_manager.hybrid_engine.search(
-                    query, query_vector, n_results, alpha, novel_filter, genre_filter
-                )
+        if self.index_manager.use_optimized_search and self.index_manager.hybrid_engine:
+            query_vector = np.array(self.embedding_fn([query])[0], dtype=np.float32)
+            return self.index_manager.hybrid_engine.search(
+                query, query_vector, n_results, alpha, novel_filter, genre_filter
+            )
 
         sem_results = self.semantic_search.search(query, n_results=n_results * 3,
                                                    novel_filter=novel_filter, genre_filter=genre_filter)

@@ -1,5 +1,23 @@
 """Output formatting utilities for search results."""
+import re
 from typing import List, Dict, Any
+
+
+def clean_text(text: str) -> str:
+    """清理文本中的多余空白：全角空格缩进、连续空格等。
+    
+    保留段落结构（换行），但去掉每行开头的全角/半角空格缩进。
+    """
+    if not text:
+        return text
+    # 按行处理：去掉每行开头的全角空格(\u3000)和半角空格
+    lines = text.split("\n")
+    cleaned = []
+    for line in lines:
+        # 去掉行首的全角空格和半角空格
+        stripped = line.lstrip("\u3000 \t")
+        cleaned.append(stripped)
+    return "\n".join(cleaned)
 
 
 def format_search_results(
@@ -39,6 +57,7 @@ def format_search_results(
         output = []
         for item in items:
             text = item.get("text") or item.get("description") or ""
+            text = clean_text(text)
             if max_content_length > 0 and len(text) > max_content_length:
                 text = text[:max_content_length] + "…"
             output.append(text)
@@ -64,6 +83,7 @@ def format_search_results(
             source = " ".join(source_parts)
         
         text = item.get("text") or item.get("description") or ""
+        text = clean_text(text)
         if max_content_length > 0 and len(text) > max_content_length:
             text = text[:max_content_length] + "…"
 

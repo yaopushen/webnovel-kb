@@ -164,31 +164,80 @@ class RemoteChatClient:
         self.api_key = api_key
         self.model = model
 
-    def chat(self, messages: List[dict], temperature: float = 0.7,
-             max_tokens: int = 4096) -> Optional[str]:
+    def _request(self, messages: List[dict], temperature: float = 0.7,
+                 max_tokens: int = 4096, tools: Optional[List[dict]] = None,
+                 tool_choice: str = "auto") -> Optional[dict]:
         url = f"{self.api_url.rstrip('/')}/chat/completions"
+        body = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "max_completion_tokens": max_tokens
+        }
+        if tools:
+            body["tools"] = tools
+            body["tool_choice"] = tool_choice
         try:
             resp = requests.post(
                 url,
                 headers={
-                    "Authorization": f"Bearer {self.api_key}",
+                    "api-key": self.api_key,
                     "Content-Type": "application/json"
                 },
-                json={
-                    "model": self.model,
-                    "messages": messages,
-                    "temperature": temperature,
-                    "max_tokens": max_tokens
-                },
-                timeout=120
+                json=body,
+                timeout=180
             )
             if resp.status_code == 200:
-                choices = resp.json().get("choices", [])
-                if choices:
-                    return choices[0].get("message", {}).get("content", "")
+                return resp.json()
             else:
-                logger.error(f"Chat API error: {resp.status_code} - {resp.text}")
-                return None
+                error_detail = resp.text[:500] if resp.text else ""
+                logger.error(f"Chat API error: {resp.status_code} - {error_detail}")
+                return {
+                    "_error": True,
+                    "status_code": resp.status_code,
+                    "message": f"Chat API HTTP {resp.status_code}",
+                    "detail": error_detail,
+                    "retry_after": resp.headers.get("Retry-After"),
+                }
+        except requests.exceptions.Timeout as e:
+            logger.error(f"Chat request timeout: {e}")
+            return {
+                "_error": True,
+                "status_code": 0,
+                "message": f"Chat API 请求超时 (180s)",
+                "detail": str(e),
+                "retry_after": None,
+            }
+        except requests.exceptions.ConnectionError as e:
+            logger.error(f"Chat request connection error: {e}")
+            return {
+                "_error": True,
+                "status_code": 0,
+                "message": f"Chat API 连接失败",
+                "detail": str(e),
+                "retry_after": None,
+            }
         except Exception as e:
             logger.error(f"Chat request failed: {e}")
-            return None
+            return {
+                "_error": True,
+                "status_code": 0,
+                "message": f"Chat API 内部错误: {type(e).__name__}",
+                "detail": str(e),
+                "retry_after": None,
+            }
+
+    def chat(self, messages: List[dict], temperature: float = 0.7,
+             max_tokens: int = 4096, tools: Optional[List[dict]] = None,
+             tool_choice: str = "auto") -> Optional[str]:
+        resp = self._request(messages, temperature, max_tokens, tools, tool_choice)
+        if resp and not resp.get("_error"):
+            choices = resp.get("choices", [])
+            if choices:
+                return choices[0].get("message", {}).get("content", "")
+        return None
+
+    def chat_raw(self, messages: List[dict], temperature: float = 0.7,
+                 max_tokens: int = 4096, tools: Optional[List[dict]] = None,
+                 tool_choice: str = "auto") -> Optional[dict]:
+        return self._request(messages, temperature, max_tokens, tools, tool_choice)
