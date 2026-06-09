@@ -1,4 +1,8 @@
-"""Entry point for running the MCP server."""
+"""Entry point for running the MCP server.
+
+To run the background worker instead:
+    python -m webnovel_kb.worker
+"""
 import sys
 import os
 

@@ -29,5 +29,7 @@ LOG_FILE_LEVEL = os.environ.get("WEBNOVEL_KB_LOG_FILE_LEVEL", "")
 QUERY_CACHE_SIZE = int(os.environ.get("WEBNOVEL_KB_QUERY_CACHE_SIZE", "256"))
 QUERY_CACHE_TTL = int(os.environ.get("WEBNOVEL_KB_QUERY_CACHE_TTL", "300"))
 
-TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
-
+ZHIHU_ACCESS_SECRET = os.environ.get("ZHIHU_ACCESS_SECRET", "")
+ZHIHU_SEARCH_URL = "https://developer.zhihu.com/api/v1/content/zhihu_search"
+ZHIHU_GLOBAL_SEARCH_URL = "https://developer.zhihu.com/api/v1/content/global_search"
+ZHIHU_ZHIDA_URL = "https://developer.zhihu.com/v1/chat/completions"

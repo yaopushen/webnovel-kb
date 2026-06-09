@@ -1,4 +1,5 @@
 """Entity extraction from novels."""
+import asyncio
 import hashlib
 import re
 import logging
@@ -27,7 +28,7 @@ class EntityExtractor:
         self.save_state = save_state_fn
         self.entities_collection = entities_collection
     
-    def extract(self, novel_title: str, novel_id: str, exact_title: str, 
+    async def extract(self, novel_title: str, novel_id: str, exact_title: str, 
                 max_chunks: int = 20) -> Dict[str, Any]:
         """快速提取实体（单chunk模式）。"""
         if not self.chat:
@@ -63,7 +64,7 @@ class EntityExtractor:
             "relationships": all_extracted["relationships"][:20]
         }
     
-    def extract_cross_chunk(self, novel_title: str, novel_id: str, exact_title: str,
+    async def extract_cross_chunk(self, novel_title: str, novel_id: str, exact_title: str,
                             max_chunks: int = 50, progress_callback=None) -> Dict[str, Any]:
         """跨章节提取实体（带时间线分析）。"""
         if not self.chat:
@@ -99,14 +100,14 @@ class EntityExtractor:
                 sampled.append(item)
         sampled = sampled[:max_chunks + len(key_sampled)]
         
-        entity_timeline = self._build_entity_timeline(sampled, progress_callback)
+        entity_timeline = await self._build_entity_timeline(sampled, progress_callback)
         if not entity_timeline:
             return {"novel": novel_title, "entities_extracted": 0, "relationships_extracted": 0}
         
         entity_timeline = self._dedupe_timeline(entity_timeline)
         logger.info(f"Entity timeline for {novel_title}: {len(entity_timeline)} unique entries")
         
-        all_extracted = self._analyze_cross_chunk_entities(entity_timeline, novel_title)
+        all_extracted = await self._analyze_cross_chunk_entities(entity_timeline, novel_title)
         
         return {
             "novel": novel_title,
@@ -137,7 +138,7 @@ class EntityExtractor:
                         key_scene_indices.add(idx)
         return key_scene_indices
     
-    def _build_entity_timeline(self, sampled: list, progress_callback=None) -> list:
+    async def _build_entity_timeline(self, sampled: list, progress_callback=None) -> list:
         """构建实体时间线。"""
         entity_timeline = []
         for idx, (chunk_text, meta) in enumerate(sampled):
@@ -148,7 +149,7 @@ class EntityExtractor:
                 {"role": "system", "content": "你是网文角色分析助手，擅长从文本中提取角色和关键实体信息。"},
                 {"role": "user", "content": f"{prompt}\n\ntext:\n{chunk_text}"}
             ]
-            response = self.chat.chat(messages, temperature=0.1)
+            response = await self.chat.chat(messages, temperature=0.1)
             if response:
                 for line in response.strip().split("\n"):
                     line = line.strip()
@@ -171,7 +172,7 @@ class EntityExtractor:
                 deduped.append(line)
         return deduped
     
-    def _analyze_cross_chunk_entities(self, timeline: list, novel_title: str) -> dict:
+    async def _analyze_cross_chunk_entities(self, timeline: list, novel_title: str) -> dict:
         """分析跨章节实体。"""
         max_timeline_chars = 20000
         timeline_text = ""
@@ -187,7 +188,7 @@ class EntityExtractor:
             {"role": "system", "content": "你是资深网文编辑，擅长分析角色弧光、关系演变和能力体系。你只提取跨章节才能发现的深层信息。"},
             {"role": "user", "content": f"{prompt}\n\n时间线：\n{timeline_text}"}
         ]
-        response = self.chat.chat(messages, temperature=0.3, max_tokens=16384)
+        response = await self.chat.chat(messages, temperature=0.3, max_tokens=16384)
         logger.info(f"Cross-chunk entity response: {response[:500] if response else 'None'}")
         
         all_extracted = {"entities": [], "relationships": []}

@@ -1,6 +1,7 @@
 """State persistence management."""
 import json
 import shutil
+import threading
 import time
 import logging
 from pathlib import Path
@@ -12,6 +13,7 @@ import networkx as nx
 from webnovel_kb.data_models import (
     NovelMeta, StyleProfile, PlotPattern,
     Entity, Relationship, WritingTemplate,
+    ChapterOutline,
 )
 
 logger = logging.getLogger("webnovel-kb")
@@ -23,6 +25,7 @@ class StateManager:
     def __init__(self, data_dir: Path):
         self.data_dir = data_dir
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self._save_lock = threading.Lock()
     
     def load_all(
         self,
@@ -32,7 +35,8 @@ class StateManager:
         entities: Dict[str, Entity],
         relationships: list,
         writing_templates: list,
-        graph: nx.DiGraph
+        graph: nx.DiGraph,
+        chapter_outlines: Optional[dict] = None
     ) -> None:
         """加载所有状态到传入的容器中。"""
         state_file = self.data_dir / "state.json"
@@ -75,6 +79,12 @@ class StateManager:
             with open(templates_file, "r", encoding="utf-8") as f:
                 for t in json.load(f):
                     writing_templates.append(WritingTemplate(**t))
+        
+        outlines_file = self.data_dir / "chapter_outlines.json"
+        if outlines_file.exists() and chapter_outlines is not None:
+            with open(outlines_file, "r", encoding="utf-8") as f:
+                for k, v in json.load(f).items():
+                    chapter_outlines[k] = ChapterOutline(**v)
     
     def save_all(
         self,
@@ -84,31 +94,37 @@ class StateManager:
         entities: Dict[str, Entity],
         relationships: list,
         writing_templates: list,
-        graph: nx.DiGraph
+        graph: nx.DiGraph,
+        chapter_outlines: Optional[dict] = None
     ) -> None:
-        """保存所有状态。"""
-        self._backup_state_files()
-        
-        state = {"novels": {k: asdict(v) for k, v in novels.items()}}
-        with open(self.data_dir / "state.json", "w", encoding="utf-8") as f:
-            json.dump(state, f, ensure_ascii=False, indent=2)
-        
-        self._save_graph(graph)
-        
-        with open(self.data_dir / "plot_patterns.json", "w", encoding="utf-8") as f:
-            json.dump([asdict(p) for p in plot_patterns], f, ensure_ascii=False, indent=2)
-        
-        with open(self.data_dir / "style_profiles.json", "w", encoding="utf-8") as f:
-            json.dump({k: asdict(v) for k, v in style_profiles.items()}, f, ensure_ascii=False, indent=2)
-        
-        with open(self.data_dir / "entities.json", "w", encoding="utf-8") as f:
-            json.dump({k: asdict(v) for k, v in entities.items()}, f, ensure_ascii=False, indent=2)
-        
-        with open(self.data_dir / "relationships.json", "w", encoding="utf-8") as f:
-            json.dump([asdict(r) for r in relationships], f, ensure_ascii=False, indent=2)
-        
-        with open(self.data_dir / "writing_templates.json", "w", encoding="utf-8") as f:
-            json.dump([asdict(t) for t in writing_templates], f, ensure_ascii=False, indent=2)
+        """保存所有状态（线程安全）。"""
+        with self._save_lock:
+            self._backup_state_files()
+            
+            state = {"novels": {k: asdict(v) for k, v in novels.items()}}
+            with open(self.data_dir / "state.json", "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+            
+            self._save_graph(graph)
+            
+            with open(self.data_dir / "plot_patterns.json", "w", encoding="utf-8") as f:
+                json.dump([asdict(p) for p in plot_patterns], f, ensure_ascii=False, indent=2)
+            
+            with open(self.data_dir / "style_profiles.json", "w", encoding="utf-8") as f:
+                json.dump({k: asdict(v) for k, v in style_profiles.items()}, f, ensure_ascii=False, indent=2)
+            
+            with open(self.data_dir / "entities.json", "w", encoding="utf-8") as f:
+                json.dump({k: asdict(v) for k, v in entities.items()}, f, ensure_ascii=False, indent=2)
+            
+            with open(self.data_dir / "relationships.json", "w", encoding="utf-8") as f:
+                json.dump([asdict(r) for r in relationships], f, ensure_ascii=False, indent=2)
+            
+            with open(self.data_dir / "writing_templates.json", "w", encoding="utf-8") as f:
+                json.dump([asdict(t) for t in writing_templates], f, ensure_ascii=False, indent=2)
+            
+            if chapter_outlines is not None:
+                with open(self.data_dir / "chapter_outlines.json", "w", encoding="utf-8") as f:
+                    json.dump({k: asdict(v) for k, v in chapter_outlines.items()}, f, ensure_ascii=False, indent=2)
     
     def _backup_state_files(self) -> None:
         """备份现有状态文件。"""
@@ -117,7 +133,7 @@ class StateManager:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         for fname in ["state.json", "knowledge_graph.json", "plot_patterns.json",
                       "style_profiles.json", "entities.json", "relationships.json",
-                      "writing_templates.json"]:
+                      "writing_templates.json", "chapter_outlines.json"]:
             src = self.data_dir / fname
             if src.exists():
                 shutil.copy2(src, backup_dir / f"{fname}.{timestamp}.bak")

@@ -1,4 +1,5 @@
 """Plot pattern extraction from novels."""
+import asyncio
 import re
 import logging
 from typing import Dict, List, Any
@@ -20,7 +21,7 @@ class PlotPatternExtractor:
         self.add_pattern = add_pattern_fn
         self.save_state = save_state_fn
     
-    def extract(self, novel_title: str, novel_id: str, exact_title: str,
+    async def extract(self, novel_title: str, novel_id: str, exact_title: str,
                 max_chunks: int = 20) -> Dict[str, Any]:
         """快速提取情节模式（单chunk模式）。"""
         if not self.chat:
@@ -43,7 +44,7 @@ class PlotPatternExtractor:
                 {"role": "system", "content": "你是资深网文编辑和写作教练，擅长识别真正有学习价值的叙事技巧。你只提取写法精妙、可复用的情节模式，宁缺毋滥。如果文本中没有值得学习的写法，输出空结果。"},
                 {"role": "user", "content": f"{prompt}\n\ntext:\n{chunk}"}
             ]
-            response = self.chat.chat(messages, temperature=0.1)
+            response = await self.chat.chat(messages, temperature=0.1)
             logger.info(f"LLM response for plot pattern: {response[:500] if response else 'None'}")
             if response:
                 self._parse_pattern_response(response, novel_title, all_patterns)
@@ -54,7 +55,7 @@ class PlotPatternExtractor:
             "patterns": all_patterns[:20]
         }
     
-    def extract_cross_chunk(self, novel_title: str, novel_id: str, exact_title: str,
+    async def extract_cross_chunk(self, novel_title: str, novel_id: str, exact_title: str,
                             max_chunks: int = 20, progress_callback=None) -> Dict[str, Any]:
         """跨章节提取情节模式（带时间线分析）。"""
         if not self.chat:
@@ -84,7 +85,7 @@ class PlotPatternExtractor:
         timeline_text = "\n".join(timeline_events)
         logger.info(f"Timeline for {novel_title}: {len(timeline_events)} events")
         
-        all_patterns = self._analyze_cross_chunk_patterns(timeline_text, novel_title)
+        all_patterns = await self._analyze_cross_chunk_patterns(timeline_text, novel_title)
         
         return {
             "novel": novel_title,
@@ -93,7 +94,7 @@ class PlotPatternExtractor:
             "patterns": all_patterns[:20]
         }
     
-    def _build_timeline(self, sampled: list, progress_callback=None) -> list:
+    async def _build_timeline(self, sampled: list, progress_callback=None) -> list:
         """构建情节时间线。"""
         timeline_events = []
         for idx, (chunk_text, meta) in enumerate(sampled):
@@ -104,7 +105,7 @@ class PlotPatternExtractor:
                 {"role": "system", "content": "你是网文情节分析助手，擅长从文本中提取关键情节事件。"},
                 {"role": "user", "content": f"{prompt}\n\ntext:\n{chunk_text}"}
             ]
-            response = self.chat.chat(messages, temperature=0.1)
+            response = await self.chat.chat(messages, temperature=0.1)
             if response:
                 for line in response.strip().split("\n"):
                     line = line.strip()
@@ -119,7 +120,7 @@ class PlotPatternExtractor:
         
         return timeline_events
     
-    def _analyze_cross_chunk_patterns(self, timeline_text: str, novel_title: str) -> list:
+    async def _analyze_cross_chunk_patterns(self, timeline_text: str, novel_title: str) -> list:
         """分析跨章节情节模式。"""
         prompt = PLOT_PATTERN_CROSS_CHUNK_PROMPT.replace("{tuple_delimiter}", "<|>")
         prompt = prompt.replace("{record_delimiter}", "|||")
@@ -128,7 +129,7 @@ class PlotPatternExtractor:
             {"role": "system", "content": "你是资深网文编辑和写作教练，擅长识别跨章节的长线叙事模式。你只提取纵览全局才能发现的模式，单章节内的手法不值得提取。"},
             {"role": "user", "content": f"{prompt}\n\n时间线：\n{timeline_text}"}
         ]
-        response = self.chat.chat(messages, temperature=0.3, max_tokens=8192)
+        response = await self.chat.chat(messages, temperature=0.3, max_tokens=8192)
         logger.info(f"Cross-chunk pattern response: {response[:500] if response else 'None'}")
         
         all_patterns = []

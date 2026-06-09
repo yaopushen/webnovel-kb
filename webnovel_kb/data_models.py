@@ -11,6 +11,8 @@ class NovelMeta:
     file_path: str = ""
     chunk_count: int = 0
     chapter_count: int = 0
+    first_chapter: int = 0
+    last_chapter: int = 0
 
 
 @dataclass
@@ -81,3 +83,29 @@ class WritingTemplate:
     source_chapter: str = ""
     example_text: str = ""
     effectiveness: str = ""
+
+
+@dataclass
+class ChapterOutline:
+    outline_id: str
+    novel_title: str
+    chapter: int
+    outline_type: str
+    content: str
+    created_at: str = ""
+    updated_at: str = ""
+    tags: list = field(default_factory=list)
+
+
+@dataclass
+class KnowledgeEntry:
+    entry_id: str
+    title: str
+    content: str
+    category: str = "research"  # market_analysis/style_guide/writing_technique/user_experience/research/query_insight
+    tags: list = field(default_factory=list)
+    source: str = ""
+    created_at: str = ""
+    access_count: int = 0
+    auto_generated: bool = False
+    archived: bool = False

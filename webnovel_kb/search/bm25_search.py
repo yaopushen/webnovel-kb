@@ -14,7 +14,7 @@ class BM25Search:
         self.collection = collection
         self.novels = novels
 
-    def search(
+    async def search(
         self,
         query: str,
         n_results: int = 10,

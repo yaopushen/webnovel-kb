@@ -16,7 +16,7 @@ class HybridSearch:
         self.bm25_search = bm25_search
         self.embedding_fn = embedding_fn
 
-    def search(
+    async def search(
         self,
         query: str,
         n_results: int = 10,
@@ -26,14 +26,14 @@ class HybridSearch:
     ) -> List[Dict[str, Any]]:
         """执行混合搜索，使用 RRF 融合。"""
         if self.index_manager.use_optimized_search and self.index_manager.hybrid_engine:
-            query_vector = np.array(self.embedding_fn([query])[0], dtype=np.float32)
+            query_vector = np.array((await self.embedding_fn([query]))[0], dtype=np.float32)
             return self.index_manager.hybrid_engine.search(
                 query, query_vector, n_results, alpha, novel_filter, genre_filter
             )
 
-        sem_results = self.semantic_search.search(query, n_results=n_results * 3,
+        sem_results = await self.semantic_search.search(query, n_results=n_results * 3,
                                                    novel_filter=novel_filter, genre_filter=genre_filter)
-        bm25_results = self.bm25_search.search(query, n_results=n_results * 3,
+        bm25_results = await self.bm25_search.search(query, n_results=n_results * 3,
                                                 novel_filter=novel_filter, genre_filter=genre_filter)
 
         k = 60

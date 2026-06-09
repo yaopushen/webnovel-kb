@@ -2,6 +2,7 @@
 import os
 import sys
 
+from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -97,23 +98,80 @@ try:
         _token_verifier = create_token_verifier()
         logger.info(f"OAuth token verifier ready: issuer={MCP_OAUTH_ISSUER_URL}")
 
+    def _build_app(transport_mode: str):
+        """Build Starlette app with OAuth routes for given transport mode.
+
+        transport_mode:
+          - "http"             → dual protocol: SSE (/sse, /messages) + Streamable HTTP (/mcp)
+          - "sse"              → SSE only
+          - "streamable-http"  → Streamable HTTP only
+        """
+        from starlette.routing import Route
+        from webnovel_kb.oauth_auth import oauth_well_known, oauth_authorize, oauth_token
+
+        if transport_mode == "http":
+            import contextlib
+
+            sse_app = mcp.sse_app()
+            sh_app = mcp.streamable_http_app()
+
+            @contextlib.asynccontextmanager
+            async def _dual_lifespan(app):
+                async with mcp._session_manager.run():
+                    yield
+
+            routes = []
+            for r in sse_app.routes:
+                routes.append(r)
+            for r in sh_app.routes:
+                routes.append(r)
+
+            starlette_app = Starlette(routes=routes, lifespan=_dual_lifespan)
+            logger.info("Dual-protocol mode: SSE (/sse, /messages) + Streamable HTTP (/mcp)")
+        elif transport_mode == "sse":
+            starlette_app = mcp.sse_app()
+        else:
+            starlette_app = mcp.streamable_http_app()
+
+        if MCP_OAUTH_ISSUER_URL:
+            oauth_routes = [
+                Route("/.well-known/oauth-authorization-server", oauth_well_known, methods=["GET"]),
+                Route("/authorize", oauth_authorize, methods=["GET"]),
+                Route("/token", oauth_token, methods=["POST"]),
+            ]
+            starlette_app.routes[:0] = oauth_routes
+            logger.info(f"OAuth routes added to {transport_mode} app")
+
+        return starlette_app
+
     class _OAuthFastMCP(FastMCP):
-        async def run_streamable_http_async(self):
-            from starlette.routing import Route
-            from webnovel_kb.oauth_auth import oauth_well_known, oauth_authorize, oauth_token
+        async def run_http_async(self):
             import uvicorn
+            starlette_app = _build_app("http")
+            config = uvicorn.Config(
+                starlette_app,
+                host=self.settings.host,
+                port=self.settings.port,
+                log_level=self.settings.log_level.lower(),
+            )
+            server = uvicorn.Server(config)
+            await server.serve()
 
-            starlette_app = self.streamable_http_app()
+        async def run_streamable_http_async(self):
+            import uvicorn
+            starlette_app = _build_app("streamable-http")
+            config = uvicorn.Config(
+                starlette_app,
+                host=self.settings.host,
+                port=self.settings.port,
+                log_level=self.settings.log_level.lower(),
+            )
+            server = uvicorn.Server(config)
+            await server.serve()
 
-            if MCP_OAUTH_ISSUER_URL:
-                oauth_routes = [
-                    Route("/.well-known/oauth-authorization-server", oauth_well_known, methods=["GET"]),
-                    Route("/authorize", oauth_authorize, methods=["GET"]),
-                    Route("/token", oauth_token, methods=["POST"]),
-                ]
-                starlette_app.routes[:0] = oauth_routes
-                logger.info("OAuth routes added to app")
-
+        async def run_sse_async(self):
+            import uvicorn
+            starlette_app = _build_app("sse")
             config = uvicorn.Config(
                 starlette_app,
                 host=self.settings.host,
@@ -131,8 +189,11 @@ except Exception as e:
 
 
 def run():
+    import asyncio
     transport = os.environ.get("MCP_TRANSPORT", "stdio")
-    if transport in ("sse", "streamable-http"):
+    if transport == "http":
+        asyncio.run(mcp.run_http_async())
+    elif transport in ("sse", "streamable-http"):
         mcp.run(transport=transport)
     else:
         mcp.run()

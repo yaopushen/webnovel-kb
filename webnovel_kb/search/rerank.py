@@ -9,7 +9,7 @@ class RerankSearch:
         self.reranker = reranker
         self.hybrid_search = hybrid_search
     
-    def search(
+    async def search(
         self,
         query: str,
         n_results: int = 10,
@@ -18,16 +18,16 @@ class RerankSearch:
     ) -> List[Dict[str, Any]]:
         """执行重排序搜索。"""
         if not self.reranker:
-            return self.hybrid_search.search(query, n_results=n_results,
+            return await self.hybrid_search.search(query, n_results=n_results,
                                               novel_filter=novel_filter, genre_filter=genre_filter)
         
-        candidates = self.hybrid_search.search(query, n_results=n_results * 5,
+        candidates = await self.hybrid_search.search(query, n_results=n_results * 5,
                                                 novel_filter=novel_filter, genre_filter=genre_filter)
         if not candidates:
             return []
         
         documents = [c["text"] for c in candidates]
-        rerank_results = self.reranker.rerank(query, documents, top_n=n_results)
+        rerank_results = await self.reranker.rerank(query, documents, top_n=n_results)
         
         output = []
         for item in rerank_results:

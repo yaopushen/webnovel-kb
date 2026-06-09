@@ -291,7 +291,8 @@ class HybridSearchEngine:
         self._executor = ThreadPoolExecutor(max_workers=2)
 
     def _sem_search(self, query: str, n_results: int,
-                    novel_filter: Optional[str], genre_filter: Optional[str]) -> List[Dict[str, Any]]:
+                    novel_filter: Optional[str], genre_filter: Optional[str],
+                    query_vector: Any = None) -> List[Dict[str, Any]]:
         if not self.embedding_fn:
             return []
         try:
@@ -300,8 +301,17 @@ class HybridSearchEngine:
                 where["title"] = novel_filter
             if genre_filter:
                 where["genre"] = genre_filter
-            params = {"query_texts": [query], "n_results": n_results * 3,
-                      "include": ["documents", "metadatas", "distances"]}
+            
+            if query_vector is not None:
+                vec = query_vector.tolist() if hasattr(query_vector, "tolist") else query_vector
+                if isinstance(vec, list) and len(vec) > 0 and not isinstance(vec[0], list):
+                    vec = [vec]
+                params = {"query_embeddings": vec, "n_results": n_results * 3,
+                          "include": ["documents", "metadatas", "distances"]}
+            else:
+                params = {"query_texts": [query], "n_results": n_results * 3,
+                          "include": ["documents", "metadatas", "distances"]}
+            
             if where:
                 params["where"] = where
             results = self.collection.query(**params)
@@ -360,7 +370,7 @@ class HybridSearchEngine:
             return cached
         
         sem_future = self._executor.submit(
-            self._sem_search, query, n_results * 3, novel_filter, genre_filter
+            self._sem_search, query, n_results * 3, novel_filter, genre_filter, query_vector
         )
         bm25_future = self._executor.submit(
             self._bm25_search, query, n_results * 3, novel_filter, genre_filter

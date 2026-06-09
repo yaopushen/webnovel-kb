@@ -56,7 +56,7 @@ def format_search_results(
     if output_format == "clean":
         output = []
         for item in items:
-            text = item.get("text") or item.get("description") or ""
+            text = item.get("text") or item.get("description") or item.get("content") or ""
             text = clean_text(text)
             if max_content_length > 0 and len(text) > max_content_length:
                 text = text[:max_content_length] + "…"
@@ -74,7 +74,7 @@ def format_search_results(
                 title = meta.get("title", "")
                 chapter = meta.get("chapter_title", "")
             if not title:
-                title = item.get("source_novel", "") or item.get("novel_title", "")
+                title = item.get("source_novel", "") or item.get("novel_title", "") or item.get("title", "")
             source_parts = []
             if title:
                 source_parts.append(f"《{title}》")
@@ -82,7 +82,7 @@ def format_search_results(
                 source_parts.append(chapter)
             source = " ".join(source_parts)
         
-        text = item.get("text") or item.get("description") or ""
+        text = item.get("text") or item.get("description") or item.get("content") or ""
         text = clean_text(text)
         if max_content_length > 0 and len(text) > max_content_length:
             text = text[:max_content_length] + "…"

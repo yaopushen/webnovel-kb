@@ -2,5 +2,5 @@ chromadb>=0.4.0
 jieba>=0.42.1
 tantivy>=0.20.0
 networkx>=3.0
-fastmcp>=0.1.0
+fastmcp>=2.14.0
 httpx>=0.25.0

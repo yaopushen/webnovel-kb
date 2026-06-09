@@ -13,7 +13,7 @@ class ScenePatternExtractor:
         self.collection = collection
         self.add_pattern = add_pattern_fn
     
-    def extract(self, novel_title: str, novel_id: str, exact_title: str,
+    async def extract(self, novel_title: str, novel_id: str, exact_title: str,
                 max_chunks: int = 15) -> Dict[str, Any]:
         """提取场景模式。"""
         if not self.chat:
@@ -43,7 +43,7 @@ class ScenePatternExtractor:
                 {"role": "system", "content": "你是资深网文编辑，擅长识别具体场景中的叙事技巧。你只提取写法精妙、可复用的场景模式，宁缺毋滥。如果文本中没有值得学习的写法，输出空结果。"},
                 {"role": "user", "content": f"{SCENE_PATTERN_PROMPT}\n\ntext:\n{chunk_text}"}
             ]
-            response = self.chat.chat(messages, temperature=0.1)
+            response = await self.chat.chat(messages, temperature=0.1)
             if response:
                 self._parse_scene_response(response, novel_title, chapter, all_patterns)
         

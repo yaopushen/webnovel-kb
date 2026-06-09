@@ -17,11 +17,11 @@ class WritingTemplateExtractor:
         self.add_template = add_template_fn
         self.save_state = save_state_fn
     
-    def extract(self, novel_title: str, novel_id: str, exact_title: str,
+    async def extract(self, novel_title: str, novel_id: str, exact_title: str,
                 max_chunks: int = 15) -> Dict[str, Any]:
         """提取写作模板。"""
         if not self.chat:
-            return {"error": "Chat API未配置，无法自动提取写作模板。请设置LLM_API_KEY。"}
+            return {"error": "Chat API未配置，无法自动提取写作模板。请设置LLM_CHAT_BASE_URL和LLM_CHAT_MODEL。"}
         
         all_chunks_data = self.collection.get(
             where={"title": exact_title},
@@ -47,7 +47,7 @@ class WritingTemplateExtractor:
                 {"role": "system", "content": "你是资深网文编辑和写作教练，擅长从优秀网文中提取可复用的场景写法模板。你只提取结构清晰、有学习价值的模板，宁缺毋滥。如果文本中没有值得提取的模板，输出空结果。"},
                 {"role": "user", "content": f"{WRITING_TEMPLATE_EXTRACTION_PROMPT}\n\ntext:\n{chunk_text}"}
             ]
-            response = self.chat.chat(messages, temperature=0.1)
+            response = await self.chat.chat(messages, temperature=0.1)
             if response:
                 self._parse_template_response(response, novel_title, chapter_title, all_templates)
         

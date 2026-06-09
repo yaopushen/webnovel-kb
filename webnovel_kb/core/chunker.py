@@ -6,11 +6,34 @@ from webnovel_kb.config import CHUNK_SIZE, CHUNK_OVERLAP
 
 class TextChunker:
     """文本分块器，支持章节识别和智能切分。"""
-    
+
     def __init__(self, chunk_size: int = CHUNK_SIZE, overlap: int = CHUNK_OVERLAP):
         self.chunk_size = chunk_size
         self.overlap = overlap
-    
+
+    @staticmethod
+    def reassemble(chunks: List[str], overlap: int = CHUNK_OVERLAP) -> str:
+        """将重叠 chunk 拼装回完整文本，自动去除相邻 chunk 间的重复部分。"""
+        if not chunks:
+            return ""
+        result = chunks[0]
+        search_window = overlap * 3
+
+        for i in range(1, len(chunks)):
+            prev_tail = result[-search_window:] if len(result) > search_window else result
+            next_head = chunks[i][:search_window] if len(chunks[i]) > search_window else chunks[i]
+
+            overlap_len = 0
+            min_len = min(len(prev_tail), len(next_head))
+            for test_len in range(min_len, 0, -1):
+                if prev_tail[-test_len:] == next_head[:test_len]:
+                    overlap_len = test_len
+                    break
+
+            result += "\n" + chunks[i][overlap_len:]
+
+        return result
+
     def chunk(self, text: str) -> List[Tuple[str, str]]:
         """
         将文本分块，返回 (chunk_text, chapter_title) 元组列表。

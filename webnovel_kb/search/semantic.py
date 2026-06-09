@@ -12,7 +12,7 @@ class SemanticSearch:
         self.collection = collection
         self.embedding_fn = embedding_fn
     
-    def search(
+    async def search(
         self,
         query: str,
         n_results: int = 10,
@@ -31,11 +31,13 @@ class SemanticSearch:
         
         query_params = {"n_results": n_results}
         if where_filter:
-            query_params["where"] = where_filter
+            where_filter_clean = {k: v for k, v in where_filter.items() if v is not None}
+            if where_filter_clean:
+                query_params["where"] = where_filter_clean
         
         if self.embedding_fn:
             try:
-                query_vec = self.embedding_fn([query])[0]
+                query_vec = (await self.embedding_fn([query]))[0]
                 query_params["query_embeddings"] = [query_vec]
             except Exception as e:
                 logger.warning(f"Embedding failed, falling back to query_texts: {e}")
