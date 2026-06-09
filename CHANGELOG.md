@@ -167,7 +167,6 @@
 - ✅ **`read_chapter` 支持多格式章标题** — 兼容 `第N章`/`第N回`/`章N`/`N、` 等格式。
 
 **修复与优化：**
-- 🔧 **永夜君王章节修复** — 1349章全部标注为 `第N章` 标准格式，源文件 `fix_yongye.py` 留存。
 - 🔧 **ChromaDB 修复** — WAL segment 损坏，从备份恢复（旧库 105G 已清理）。
 - 🧹 **磁盘空间清理** — 回收 ~190G（chroma_db.broken 105G + BrowserMetrics 84G + .npm 644M）。
 - 🧹 **BrowserMetrics 根治** — 软链接到 `/dev/null`，防止 Chromium snap 自动化测试再泄漏。
