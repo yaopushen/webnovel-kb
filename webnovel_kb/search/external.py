@@ -1,4 +1,4 @@
-"""外部搜索 API 封装——全网搜索、站内搜索、直答。"""
+"""外部搜索 API 封装——知乎全网搜索、站内搜索、直答。"""
 import time
 from typing import List
 
@@ -20,9 +20,9 @@ class ExternalSearch:
         self.zhida_url = zhida_url
 
     async def global_search(self, query: str, n_results: int = 5) -> list:
-        """调用全网搜索 API 获取外部知识。"""
+        """调用知乎全网搜索 API 获取外部知识。"""
         if not self.access_secret:
-            return [{"error": "未配置外部搜索 API 密钥（ZHIHU_ACCESS_SECRET）"}]
+            return [{"error": "未配置 ZHIHU_ACCESS_SECRET 环境变量"}]
         try:
             async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
                 resp = await client.get(

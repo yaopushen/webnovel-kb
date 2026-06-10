@@ -74,6 +74,51 @@ class KnowledgeStore:
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         entry_id = f"ak_{datetime.now().strftime('%Y%m%d')}_{uuid.uuid4().hex[:6]}"
 
+        # 1. 标题精准碰撞去重
+        try:
+            existing = self.collection.get(where={"title": title})
+            if existing and existing.get("ids"):
+                logger.info(f"Duplicate knowledge title detected: '{title}'. Skipping add.")
+                return {
+                    "status": "ok",
+                    "id": existing["ids"][0],
+                    "title": title,
+                    "insights": [],
+                    "note": "检测到相同标题的知识，已自动去重并跳过保存",
+                    "total_knowledge": self._meta["total_added"]
+                }
+        except Exception as e:
+            logger.warning(f"Error checking duplicate title: {e}")
+
+        # 2. 向量生成与语义相似度去重
+        emb = None
+        if self.embedding_fn:
+            try:
+                emb = (await self.embedding_fn([content]))[0]
+                if self.collection.count() > 0:
+                    sim_results = self.collection.query(
+                        query_embeddings=[emb],
+                        n_results=1,
+                        where={"category": category}
+                    )
+                    if sim_results and sim_results.get("distances") and sim_results["distances"][0]:
+                        distance = sim_results["distances"][0][0]
+                        similarity = 1 - distance
+                        if similarity >= self.DEDUP_THRESHOLD:
+                            dup_id = sim_results["ids"][0][0]
+                            dup_title = sim_results["metadatas"][0][0].get("title", "")
+                            logger.info(f"Duplicate knowledge detected: similarity {similarity:.4f} >= {self.DEDUP_THRESHOLD} with '{dup_title}'. Skipping add.")
+                            return {
+                                "status": "ok",
+                                "id": dup_id,
+                                "title": title,
+                                "insights": [],
+                                "note": f"检测到高度相似的知识（与《{dup_title}》相似度 {similarity*100:.1f}%），已自动去重并跳过保存",
+                                "total_knowledge": self._meta["total_added"]
+                            }
+            except Exception as e:
+                logger.warning(f"Error checking semantic duplicate: {e}")
+
         # Index in ChromaDB
         try:
             meta = {
@@ -86,8 +131,7 @@ class KnowledgeStore:
                 "auto_generated": str(auto_generated),
                 "archived": "false"
             }
-            if self.embedding_fn:
-                emb = (await self.embedding_fn([content]))[0]
+            if emb:
                 self.collection.add(
                     ids=[entry_id],
                     documents=[content],

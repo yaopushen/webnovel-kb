@@ -181,9 +181,9 @@ class WebNovelKnowledgeBase:
             self.chat, self.state_manager
         )
 
-        # 文抄公
-        from webnovel_kb.creation.sample_generator import SampleGenerator
-        self.sample_generator = SampleGenerator(self.chat, self)
+        # 初稿生成
+        from webnovel_kb.creation.draft_generator import DraftGenerator
+        self.draft_generator = DraftGenerator(self.chat, self)
 
         # 章纲管理器
         from webnovel_kb.core.outline_manager import OutlineManager

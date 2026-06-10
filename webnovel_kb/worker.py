@@ -83,8 +83,8 @@ class Worker:
                 result = await self._exec_outline_batch(task)
             elif task_type == "knowledge_cleanup":
                 result = await self._exec_knowledge_cleanup(task)
-            elif task_type == "generate_sample":
-                result = await self._exec_generate_sample(task)
+            elif task_type == "generate_draft":
+                result = await self._exec_generate_draft(task)
             else:
                 result = {"error": f"Unknown task type: {task_type}"}
 
@@ -147,12 +147,12 @@ class Worker:
         await self.kb.knowledge_store._run_cleanup()
         return {"status": "cleanup_done"}
 
-    async def _exec_generate_sample(self, task):
-        """执行素材范例生成。"""
+    async def _exec_generate_draft(self, task):
+        """执行初稿生成任务。"""
         params = task.get("params", {})
-        if hasattr(self.kb, 'sample_generator'):
-            return await self.kb.sample_generator.generate(**params)
-        return {"error": "SampleGenerator not initialized"}
+        if hasattr(self.kb, 'draft_generator'):
+            return await self.kb.draft_generator.generate(**params)
+        return {"error": "DraftGenerator not initialized"}
 
     def _update_progress(self, task_id, pct):
         """更新任务进度到文件。"""
